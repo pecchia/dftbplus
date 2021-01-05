@@ -6171,6 +6171,7 @@ contains
     elph%model = 1
 
     call getChildValue(node, "MaxSCBAIterations", elph%scba_niter, default=100)
+    call getChildValue(node, "SCBATolerance", elph%scba_tol, default=1.0d-7)
     call getChildValue(node, "atomBlock", block_model, default=.false.)
     if (block_model) then
       elph%model = 2

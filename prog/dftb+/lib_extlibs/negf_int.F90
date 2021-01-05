@@ -20,6 +20,7 @@ module negf_int
   use libnegf, only : destroy_matrices, destroy_negf, get_params, init_contacts, init_ldos
   use libnegf, only : init_negf, init_structure, pass_hs, set_bp_dephasing
   use libnegf, only : set_drop, set_elph_block_dephasing, set_elph_dephasing, set_elph_s_dephasing
+  use libnegf, only : interaction_models
   use libnegf, only : set_ldos_indexes, set_params, set_scratch, writememinfo, writepeakinfo
   use libnegf, only : printcsr
   use dftbp_accuracy
@@ -300,7 +301,7 @@ contains
       end if
       write(stdOut,*) 'Contour Points: ', params%Np_n(1:2)
       write(stdOut,*) 'Number of poles: ', params%N_poles
-      write(stdOut,*) 'Real-axis points: ', params%Np_real(1)
+      write(stdOut,*) 'Real-axis points: ', params%Np_real
       if (params%readOldDM_SGFs==0) then
         write(stdOut,*) 'Read Existing SGFs: Yes '
       else
@@ -363,18 +364,9 @@ contains
     ! DAR begin - negf_init - TransPar to negf
     !--------------------------------------------------------------------------
     if (transpar%defined) then
-      !this%negf%tNoGeometry = transpar%tNoGeometry
       this%negf%tOrthonormal = transpar%tOrthonormal
       this%negf%tOrthonormalDevice = transpar%tOrthonormalDevice
       this%negf%NumStates = transpar%NumStates
-      this%negf%tManyBody = transpar%tManyBody
-      this%negf%tElastic = transpar%tElastic
-      this%negf%tZeroCurrent = transpar%tZeroCurrent
-      this%negf%MaxIter = transpar%MaxIter
-      this%negf%trans%out%tWriteDOS = transpar%tWriteDOS
-      this%negf%tWrite_ldos = transpar%tWrite_ldos
-      this%negf%tWrite_negf_params = transpar%tWrite_negf_params
-      this%negf%trans%out%tDOSwithS = transpar%tDOSwithS
       this%negf%cont(:)%name = transpar%contacts(:)%name
       this%negf%cont(:)%tWriteSelfEnergy = transpar%contacts(:)%tWriteSelfEnergy
       this%negf%cont(:)%tReadSelfEnergy = transpar%contacts(:)%tReadSelfEnergy
@@ -385,11 +377,6 @@ contains
     ! Defined outside transpar%defined ... HAS TO BE FIXED
     this%negf%tDephasingVE = transpar%tDephasingVE
     this%negf%tDephasingBP = transpar%tDephasingBP
-
-    if((.not. this%negf%tElastic).and.(.not. this%negf%tManyBody)) then
-      write(stdOut, *)'Current is not calculated!'
-      call error('Choose "Elastic = Yes" or "ManyBody = Yes"!')
-    end if
 
   end subroutine TNegfInt_init
 
@@ -425,13 +412,13 @@ contains
 
     write(stdOut,*)
     select case(elph%model)
-    case(1)
+    case(interaction_models%local)
       write(stdOut,*) 'Setting local fully diagonal (FD) elastic dephasing model'
       call set_elph_dephasing(negf, elph%coupling, elph%scba_niter)
-    case(2)
+    case(interaction_models%semilocal)
       write(stdOut,*) 'Setting local block diagonal (BD) elastic dephasing model'
       call set_elph_block_dephasing(negf, elph%coupling, elph%orbsperatm, elph%scba_niter)
-    case(3)
+    case(interaction_models%overlap)
       write(stdOut,*) 'Setting overlap mask (OM) block diagonal elastic dephasing model'
       call set_elph_s_dephasing(negf, elph%coupling, elph%orbsperatm, elph%scba_niter)
     case default
@@ -452,14 +439,14 @@ contains
 
     write(stdOut,*)
     select case(elph%model)
-    case(1)
+    case(interaction_models%local)
       write(stdOut,*) 'Setting local fully diagonal (FD) BP dephasing model'
       !write(stdOut,*) 'coupling=',elph%coupling
       call set_bp_dephasing(negf, elph%coupling)
-    case(2)
+    case(interaction_models%semilocal)
       write(stdOut,*) 'Setting local block diagonal (BD) BP dephasing model'
       call error('NOT IMPLEMENTED! INTERRUPTED!')
-    case(3)
+    case(interaction_models%overlap)
       write(stdOut,*) 'Setting overlap mask (OM) block diagonal BP dephasing model'
       call error('NOT IMPLEMENTED! INTERRUPTED!')
     case default

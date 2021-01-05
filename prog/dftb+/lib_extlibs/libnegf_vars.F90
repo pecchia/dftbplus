@@ -36,6 +36,9 @@ module libnegf_vars
     !> Iterations for self-consistent Born approximation
     integer :: scba_niter = 0
 
+    !> Iterations for self-consistent Born approximation
+    real(dp) :: scba_tol = 0.0_dp
+
     !> List of orbital per atom for models = (2,3)
     integer, allocatable :: orbsperatm(:)
 
