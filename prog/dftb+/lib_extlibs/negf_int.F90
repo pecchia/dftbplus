@@ -779,7 +779,7 @@ contains
 
     call get_params(negf, params)
 
-    params%kpoint = nkpoint
+    params%iKpoint = nkpoint
     params%spin = spin
     params%DorE='N'
     nn=size(mu,1)
@@ -843,7 +843,7 @@ contains
     call get_params(negf, params)
 
     params%spin = spin
-    params%kpoint = kpoint
+    params%ikpoint = kpoint
     params%wght = wght
 
     call pass_HS(negf,HH,SS)
@@ -971,7 +971,7 @@ contains
     call get_params(negf, params)
 
     params%spin = spin
-    params%kpoint = kpoint
+    params%ikpoint = kpoint
     params%wght = wght
 
     call set_params(negf, params)

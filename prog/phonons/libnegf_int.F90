@@ -620,7 +620,7 @@ module libnegf_int
 
     call get_params(negf, params)
 
-    params%kpoint = qpoint
+    params%ikpoint = qpoint
     params%wght = wght
     
     call set_params(negf, params)
