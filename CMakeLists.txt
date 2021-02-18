@@ -30,14 +30,12 @@ if(WITH_API)
   dftbp_get_api_version(API_VERSION API_VERSION_MAJOR API_VERSION_MINOR API_VERSION_PATCH)
 endif()
 
-find_package(MPI QUIET)
-if(WITH_MPI AND NOT MPI_FORTRAN_FOUND)
-  message(FATAL_ERROR "Compiler ${CMAKE_Fortran_COMPILER} is not MPI capable but is specified for "
-    "a WITH_MPI=TRUE build")
-elseif(NOT WITH_MPI AND MPI_FORTRAN_FOUND)
-  message(WARNING "MPI enabled compiler ${CMAKE_Fortran_COMPILER} found for a non-MPI build. Your "
-    "build will NOT be MPI-parallelised. Set WITH_MPI=TRUE in order to obtain an MPI-parallelised "
-    "build.")
+if(WITH_MPI)
+  find_package(MPI REQUIRED)
+  if(NOT MPI_FORTRAN_FOUND)
+    message(FATAL_ERROR "Compiler ${CMAKE_Fortran_COMPILER} is not MPI capable but is specified "
+      "for a WITH_MPI=TRUE build")
+  endif()
 endif()
 
 if(WITH_OMP AND NOT TARGET OpenMP::OpenMP_Fortran)
@@ -142,6 +140,9 @@ include(GNUInstallDirs)
 
 add_subdirectory(external/xmlf90 EXCLUDE_FROM_ALL)
 
+# Include ddCOSMO library
+add_subdirectory(external/ddcosmo EXCLUDE_FROM_ALL)
+
 if(WITH_SOCKETS)
   add_subdirectory(external/fsockets EXCLUDE_FROM_ALL)
 endif()
@@ -180,7 +181,7 @@ endif()
 
 if(WITH_TRANSPORT)
   set(LIBNEGF_GIT_REPOSITORY "https://github.com/libnegf/libnegf.git")
-  set(LIBNEGF_GIT_TAG "f9aef6ba27431771cfbb1e23ddf2a72386d402db")  # do not change manually!
+  set(LIBNEGF_GIT_TAG "83d7588d3b05cf4aaf989085cea96f5dcf1b9830")  # do not change manually!
   dftbp_config_hybrid_dependency(Negf Negf::Negf "${HYBRID_CONFIG_METHODS}" "QUIET"
     external/libnegf "${exclude}" "${LIBNEGF_GIT_REPOSITORY}" "${LIBNEGF_GIT_TAG}")
   #list(APPEND PKG_CONFIG_REQUIRES negf)

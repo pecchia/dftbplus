@@ -62,9 +62,9 @@ module dftbp_parser
   use dftbp_reks
   use dftbp_plumed, only : withPlumed
   use dftbp_arpack, only : withArpack
-  use poisson_init
+  use dftbp_poisson, only : TPoissonInfo, TPoissonStructure
 #:if WITH_TRANSPORT
-  use libnegf_vars
+  use dftbp_negfvars
 #:endif
   use dftbp_solvparser, only : readSolvation, readCM5
   implicit none
@@ -1457,22 +1457,20 @@ contains
     call readKPoints(node, ctrl, geo, tBadIntegratingKPoints)
 
     call getChild(node, "OrbitalPotential", child, requested=.false.)
-    if (.not. associated(child)) then
-      ctrl%tDFTBU = .false.
-      ctrl%DFTBUfunc = 0
-    else
+    if (associated(child)) then
+      allocate(ctrl%dftbUInp)
       call getChildValue(child, "Functional", buffer, "fll")
       select case(tolower(char(buffer)))
       case ("fll")
-        ctrl%DFTBUfunc = plusUFunctionals%fll
+        ctrl%dftbUInp%iFunctional = plusUFunctionals%fll
       case ("psic")
-        ctrl%DFTBUfunc = plusUFunctionals%pSic
+        ctrl%dftbUInp%iFunctional = plusUFunctionals%pSic
       case default
         call detailedError(child,"Unknown orbital functional :"// char(buffer))
       end select
 
-      allocate(ctrl%nUJ(geo%nSpecies))
-      ctrl%nUJ = 0
+      allocate(ctrl%dftbUInp%nUJ(geo%nSpecies))
+      ctrl%dftbUInp%nUJ(:) = 0
 
       ! to hold list of U-J values for each atom
       allocate(lrN(geo%nSpecies))
@@ -1486,8 +1484,8 @@ contains
         call init(liN(iSp1))
         call init(li1N(iSp1))
         call getChildren(child, trim(geo%speciesNames(iSp1)), children)
-        ctrl%nUJ(iSp1) = getLength(children)
-        do ii = 1, ctrl%nUJ(iSp1)
+        ctrl%dftbUInp%nUJ(iSp1) = getLength(children)
+        do ii = 1, ctrl%dftbUInp%nUJ(iSp1)
           call getItem1(children, ii, child2)
 
           call init(li)
@@ -1516,28 +1514,29 @@ contains
       end do
 
       do iSp1 = 1, geo%nSpecies
-        ctrl%nUJ(iSp1) = len(lrN(iSp1))
+        ctrl%dftbUInp%nUJ(iSp1) = len(lrN(iSp1))
       end do
-      allocate(ctrl%UJ(maxval(ctrl%nUJ),geo%nSpecies))
-      ctrl%UJ = 0.0_dp
-      allocate(ctrl%niUJ(maxval(ctrl%nUJ),geo%nSpecies))
-      ctrl%niUJ = 0
+      allocate(ctrl%dftbUInp%UJ(maxval(ctrl%dftbUInp%nUJ),geo%nSpecies))
+      ctrl%dftbUInp%UJ(:,:) = 0.0_dp
+      allocate(ctrl%dftbUInp%niUJ(maxval(ctrl%dftbUInp%nUJ),geo%nSpecies))
+      ctrl%dftbUInp%niUJ(:,:) = 0
       do iSp1 = 1, geo%nSpecies
-        call asArray(lrN(iSp1),ctrl%UJ(1:len(lrN(iSp1)),iSp1))
+        call asArray(lrN(iSp1),ctrl%dftbUInp%UJ(1:len(lrN(iSp1)),iSp1))
         allocate(iTmpN(len(liN(iSp1))))
         call asArray(liN(iSp1),iTmpN)
-        ctrl%niUJ(1:len(liN(iSp1)),iSp1) = iTmpN(:)
+        ctrl%dftbUInp%niUJ(1:len(liN(iSp1)),iSp1) = iTmpN(:)
         deallocate(iTmpN)
         call destruct(lrN(iSp1))
         call destruct(liN(iSp1))
       end do
-      allocate(ctrl%iUJ(maxval(ctrl%niUJ),maxval(ctrl%nUJ),geo%nSpecies))
-      ctrl%iUJ = 0
+      allocate(ctrl%dftbUInp%iUJ(maxval(ctrl%dftbUInp%niUJ),&
+          & maxval(ctrl%dftbUInp%nUJ),geo%nSpecies))
+      ctrl%dftbUInp%iUJ(:,:,:) = 0
       do iSp1 = 1, geo%nSpecies
-        do ii = 1, ctrl%nUJ(iSp1)
-          allocate(iTmpN(ctrl%niUJ(ii,iSp1)))
+        do ii = 1, ctrl%dftbUInp%nUJ(iSp1)
+          allocate(iTmpN(ctrl%dftbUInp%niUJ(ii,iSp1)))
           call get(li1N(iSp1),iTmpN,ii)
-          ctrl%iUJ(1:ctrl%niUJ(ii,iSp1),ii,iSp1) = iTmpN(:)
+          ctrl%dftbUInp%iUJ(1:ctrl%dftbUInp%niUJ(ii,iSp1),ii,iSp1) = iTmpN(:)
           deallocate(iTmpN)
         end do
         call destruct(li1N(iSp1))
@@ -1547,14 +1546,14 @@ contains
       deallocate(lrN)
       deallocate(liN)
 
-      ! sanity check time
+      ! check input values
       allocate(iTmpN(slako%orb%mShell))
       do iSp1 = 1, geo%nSpecies
         iTmpN = 0
         ! loop over number of blocks for that species
-        do ii = 1, ctrl%nUJ(iSp1)
-          iTmpN(ctrl%iUJ(1:ctrl%niUJ(ii,iSp1),ii,iSp1)) = &
-              & iTmpN(ctrl%iUJ(1:ctrl%niUJ(ii,iSp1),ii,iSp1)) + 1
+        do ii = 1, ctrl%dftbUInp%nUJ(iSp1)
+          iTmpN(ctrl%dftbUInp%iUJ(1:ctrl%dftbUInp%niUJ(ii,iSp1),ii,iSp1)) = &
+              & iTmpN(ctrl%dftbUInp%iUJ(1:ctrl%dftbUInp%niUJ(ii,iSp1),ii,iSp1)) + 1
         end do
         if (any(iTmpN(:)>1)) then
           write(stdout, *)'Multiple copies of shells present in OrbitalPotential!'
@@ -1566,8 +1565,6 @@ contains
         end if
       end do
       deallocate(iTmpN)
-
-      ctrl%tDFTBU = .true.
 
     end if
 
@@ -2032,9 +2029,9 @@ contains
     case ("poisson")
       ctrl%tPoisson = .true.
     #:if WITH_TRANSPORT
-      call readPoisson(value1, poisson, geo%tPeriodic, tp, geo%latVecs)
+      call readPoisson(value1, poisson, geo%tPeriodic, tp, geo%latVecs, ctrl%updateSccAfterDiag)
     #:else
-      call readPoisson(value1, poisson, geo%tPeriodic, geo%latVecs)
+      call readPoisson(value1, poisson, geo%tPeriodic, geo%latVecs, ctrl%updateSccAfterDiag)
     #:endif
     case default
       call getNodeHSDName(value1, buffer)
@@ -3096,42 +3093,47 @@ contains
 
     ! X-H interaction corrections including H5 and damping
     ctrl%tDampH = .false.
-    ctrl%h5SwitchedOn = .false.
     call getChildValue(node, "HCorrection", value1, "None", child=child)
     call getNodeName(value1, buffer)
+
     select case (char(buffer))
+
     case ("none")
       ! nothing to do
+
     case ("damping")
       ! Switch the correction on
       ctrl%tDampH = .true.
       call getChildValue(value1, "Exponent", ctrl%dampExp)
+
     case ("h5")
-      ! Switch the correction on
-      ctrl%h5SwitchedOn = .true.
+      allocate(ctrl%h5Input)
+      associate (h5Input => ctrl%h5Input)
+        call getChildValue(value1, "RScaling", h5Input%rScale, 0.714_dp)
+        call getChildValue(value1, "WScaling", h5Input%wScale, 0.25_dp)
+        allocate(h5Input%elementParams(geo%nSpecies))
+        call getChild(value1, "H5Scaling", child2, requested=.false.)
+        if (.not. associated(child2)) then
+          call setChild(value1, "H5scaling", child2)
+        end if
+        do iSp = 1, geo%nSpecies
+          select case (geo%speciesNames(iSp))
+          case ("O")
+            h5ScalingDef = 0.06_dp
+          case ("N")
+            h5ScalingDef = 0.18_dp
+          case ("S")
+            h5ScalingDef = 0.21_dp
+          case default
+            ! Default value is -1, this indicates that the element should be ignored
+            h5ScalingDef = -1.0_dp
+          end select
+          call getChildValue(child2, geo%speciesNames(iSp), h5Input%elementParams(iSp),&
+              & h5ScalingDef)
+        end do
+        h5Input%speciesNames = geo%speciesNames
+      end associate
 
-      call getChildValue(value1, "RScaling", ctrl%h5RScale, 0.714_dp)
-      call getChildValue(value1, "WScaling", ctrl%h5WScale, 0.25_dp)
-
-      allocate(ctrl%h5ElementPara(geo%nSpecies))
-      call getChild(value1, "H5Scaling", child2, requested=.false.)
-      if (.not. associated(child2)) then
-        call setChild(value1, "H5scaling", child2)
-      end if
-      do iSp = 1, geo%nSpecies
-        select case (geo%speciesNames(iSp))
-        case ("O")
-          h5ScalingDef = 0.06_dp
-        case ("N")
-          h5ScalingDef = 0.18_dp
-        case ("S")
-          h5ScalingDef = 0.21_dp
-        case default
-          ! Default value is -1, this indicates that the element should be ignored
-          h5ScalingDef = -1.0_dp
-        end select
-        call getChildValue(child2, geo%speciesNames(iSp), ctrl%h5ElementPara(iSp), h5ScalingDef)
-      end do
     case default
       call getNodeHSDName(value1, buffer)
       call detailedError(child, "Invalid HCorrection '" // char(buffer) // "'")
@@ -5737,9 +5739,9 @@ contains
 
   !> Read in Poisson related data
 #:if WITH_TRANSPORT
-  subroutine readPoisson(pNode, poisson, tPeriodic, transpar, latVecs)
+  subroutine readPoisson(pNode, poisson, tPeriodic, transpar, latVecs, updateSccAfterDiag)
 #:else
-  subroutine readPoisson(pNode, poisson, tPeriodic, latVecs)
+  subroutine readPoisson(pNode, poisson, tPeriodic, latVecs, updateSccAfterDiag)
 #:endif
 
     !> Input tree
@@ -5758,6 +5760,9 @@ contains
 
     !> Lattice vectors if periodic
     real(dp), allocatable, intent(in) :: latVecs(:,:)
+
+    !> Whether Scc should be updated with the output charges (obtained after diagonalization)
+    logical, intent(out) :: updateSccAfterDiag
 
     type(fnode), pointer :: pTmp, pTmp2, pChild, field
     type(string) :: buffer, modifier
@@ -5828,7 +5833,7 @@ contains
     call getChildValue(pNode, "PoissonAccuracy", poisson%poissAcc, 1.0e-6_dp)
     call getChildValue(pNode, "BuildBulkPotential", poisson%bulkBC, .true.)
     call getChildValue(pNode, "ReadOldBulkPotential", poisson%readBulkPot, .false.)
-    call getChildValue(pNode, "RecomputeAfterDensity", poisson%solvetwice, .false.)
+    call getChildValue(pNode, "RecomputeAfterDensity", updateSccAfterDiag, .false.)
     call getChildValue(pNode, "MaxPoissonIterations", poisson%maxPoissIter, 60)
 
     poisson%overrideBC(:) = 0
