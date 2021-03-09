@@ -608,8 +608,9 @@ contains
 
     #:if WITH_TRANSPORT
       if (this%tNegf) then
-        call setupNegfStuff(this%negfInt, this%denseDesc, this%transpar, this%ginfo,&
-            & this%neighbourList, this%nNeighbourSK, this%img2CentCell, this%orb)
+        call setupNegfStuff(this%negfInt, this%denseDesc, this%transpar, this%ginfo, this%coord, &
+            & this%neighbourList, this%nNeighbourSK, this%img2CentCell, this%orb, this%kPoint, &
+            & this%kWeight, this%parallelKS%localKS)
       end if
     #:endif
 
@@ -1761,8 +1762,8 @@ contains
 #:if WITH_TRANSPORT
 
   !> Initialise transport
-  subroutine setupNegfStuff(negfInt, denseDescr, transpar, ginfo, neighbourList, nNeighbourSK,&
-      & img2CentCell, orb)
+  subroutine setupNegfStuff(negfInt, denseDescr, transpar, ginfo, coords, neighbourList, nNeighbourSK,&
+      & img2CentCell, orb, kPoint, kWeight, localKS)
 
     !> NEGF interface
     type(TNegfInt), intent(inout) :: negfInt
@@ -1776,11 +1777,8 @@ contains
     !> libNEGF data
     type(TNEGFInfo), intent(in) :: ginfo
 
-    !> Atomic orbital information
-    type(TOrbitals), intent(in) :: orb
-
-    !> Image atoms to their equivalent in the central cell
-    integer, intent(in) :: img2CentCell(:)
+    !> atomic coordinates
+    real(dp), intent(in) :: coords(:,:)
 
     !> List of neighbouring atoms
     type(TNeighbourList), intent(in) :: neighbourList
@@ -1788,14 +1786,31 @@ contains
     !> Number of neighbours of each real atom
     integer, intent(in) :: nNeighbourSK(:)
 
+    !> Image atoms to their equivalent in the central cell
+    integer, intent(in) :: img2CentCell(:)
+
+    !> Atomic orbital information
+    type(TOrbitals), intent(in) :: orb
+
+    !> k-points
+    real(dp), intent(in) :: kPoint(:,:)
+
+    !> Weights for k-points
+    real(dp), intent(in) :: kWeight(:)
+
+    !> local indices of kpoints and spin
+    integer, intent(in) :: localKS(:,:)
+
     ! known issue about the PLs: We need an automatic partitioning
     call negfInt%setup_csr(denseDescr%iAtomStart, neighbourList%iNeighbour, nNeighbourSK,&
         & img2CentCell, orb)
 
-    call negfInt%setup_str(denseDescr, transpar, ginfo%greendens, neighbourList%iNeighbour,&
+    call negfInt%setup_str(denseDescr, transpar, ginfo%greendens, coords, neighbourList%iNeighbour,&
         & nNeighbourSK, img2CentCell)
 
     call negfInt%setup_dephasing(ginfo%tundos)  !? why tundos
+
+    call negfInt%setup_kpoints(kPoint, kWeight, localKS(1,:))
 
   end subroutine setupNegfStuff
 

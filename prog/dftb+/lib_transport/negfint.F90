@@ -19,10 +19,11 @@ module dftbp_negfint
   use dftbp_negf, only : associate_current, compute_current, compute_density_dft, compute_ldos
   use dftbp_negf, only : create, create_scratch, destroy, set_readoldDMsgf
   use dftbp_negf, only : destroy_matrices, destroy_negf, get_params, init_contacts, init_ldos
-  use dftbp_negf, only : init_negf, init_structure, pass_hs, set_bp_dephasing
-  use dftbp_negf, only : set_drop, set_elph_block_dephasing, set_elph_dephasing
-  use dftbp_negf, only : set_elph_s_dephasing, set_ldos_indexes, set_params, set_scratch
-  use dftbp_negf, only : writememinfo, writepeakinfo, printcsr
+  use dftbp_negf, only : init_negf, init_structure, init_basis, pass_hs, set_bp_dephasing
+  use dftbp_negf, only : set_kpoints, set_drop, set_ldos_indexes
+  use dftbp_negf, only : set_elph_block_dephasing, set_elph_dephasing, set_elph_inelastic
+  use dftbp_negf, only : set_elph_s_dephasing, interaction_models
+  use dftbp_negf, only : writememinfo, writepeakinfo, printcsr, set_scratch, set_params
   use dftbp_accuracy
   use dftbp_environment
   use dftbp_constants
@@ -66,6 +67,7 @@ module dftbp_negfint
 
     procedure :: setup_csr
     procedure :: setup_str
+    procedure :: setup_kpoints
     procedure :: setup_dephasing
     procedure :: calcdensity_green
     procedure :: calcEdensity_green
@@ -355,8 +357,6 @@ contains
     call set_params(this%negf,params)
 
     !--------------------------------------------------------------------------
-    ! DAR begin - negf_init - TransPar to negf
-    !--------------------------------------------------------------------------
     if (transpar%defined) then
       this%negf%tOrthonormal = transpar%tOrthonormal
       this%negf%tOrthonormalDevice = transpar%tOrthonormalDevice
@@ -367,10 +367,6 @@ contains
       this%negf%cont(:)%tWriteSurfaceGF = transpar%contacts(:)%tWriteSurfaceGF
       this%negf%cont(:)%tReadSurfaceGF = transpar%contacts(:)%tReadSurfaceGF
     end if
-
-    ! Defined outside transpar%defined ... HAS TO BE FIXED
-    this%negf%tDephasingVE = transpar%tDephasingVE
-    this%negf%tDephasingBP = transpar%tDephasingBP
 
   end subroutine TNegfInt_init
 
@@ -384,11 +380,11 @@ contains
     !> density of states in tunnel region
     type(TNEGFTunDos), intent(in) :: tundos
 
-    if(this%negf%tDephasingVE) then
+    if(allocated(tundos%elph)) then
       call negf_setup_elph(this%negf, tundos%elph)
     end if
 
-    if(this%negf%tDephasingBP) then
+    if(allocated(tundos%bp)) then
       call negf_setup_bp(this%negf, tundos%bp)
     end if
 
@@ -402,22 +398,47 @@ contains
     type(TNegf), intent(inout) :: negf
 
     !> el-ph coupling structure
-    type(TElPh), intent(in) :: elph
+    type(TElPh), intent(in) :: elph(:)
 
-    write(stdOut,*)
-    select case(elph%model)
-    case(interaction_models%local)
-      write(stdOut,*) 'Setting local fully diagonal (FD) elastic dephasing model'
-      call set_elph_dephasing(negf, elph%coupling, elph%scba_niter)
-    case(interaction_models%semilocal)
-      write(stdOut,*) 'Setting local block diagonal (BD) elastic dephasing model'
-      call set_elph_block_dephasing(negf, elph%coupling, elph%orbsperatm, elph%scba_niter)
-    case(interaction_models%overlap)
-      write(stdOut,*) 'Setting overlap mask (OM) block diagonal elastic dephasing model'
-      call set_elph_s_dephasing(negf, elph%coupling, elph%orbsperatm, elph%scba_niter)
-    case default
-      call error("This electron-phonon model is not supported")
-    end select
+    integer :: ii
+    real(dp) :: kbT
+
+    kbT = 0.0_dp
+    do ii = 1, size(negf%cont)
+      kbT = kbT + negf%cont(ii)%kbT_t  
+    end do
+    kbT = kbT/size(negf%cont)
+
+    print*,'debug create elph size:', size(elph)
+
+    call negf%create_interactions(size(elph))
+
+    do ii = 1, size(elph)
+      write(stdOut,*)
+      select case(elph(ii)%model)
+      case(interaction_models%dephdiagonal)
+        write(stdOut,*) 'Setting local fully diagonal (FD) elastic dephasing model'
+        call set_elph_dephasing(negf, elph(ii)%coupling, elph(ii)%scba_niter)
+      case(interaction_models%dephatomblock)
+        write(stdOut,*) 'Setting local block diagonal (BD) elastic dephasing model'
+        call set_elph_block_dephasing(negf, elph(ii)%coupling, elph(ii)%orbsperatm, &
+             & elph(ii)%scba_niter)
+      case(interaction_models%dephoverlap)
+        write(stdOut,*) 'Setting overlap mask (OM) block diagonal elastic dephasing model'
+        call set_elph_s_dephasing(negf, elph(ii)%coupling, elph(ii)%orbsperatm, &
+             & elph(ii)%scba_niter)
+      case(interaction_models%polaroptical)
+        write(stdOut,*) 'Setting polar-optical inelastic scattering model'
+        call set_elph_inelastic(negf, elph(ii)%coupling, elph(ii)%wq, kbT, &
+             & elph(ii)%scba_niter) 
+      case(interaction_models%nonpolaroptical)
+        write(stdOut,*) 'Setting non polar-optical inelastic scattering model'
+        call set_elph_inelastic(negf, elph(ii)%coupling, elph(ii)%wq, kbT, &
+             & elph(ii)%scba_niter) 
+      case default
+        call error("Electron-phonon model is not supported ")
+      end select
+    end do
 
   end subroutine negf_setup_elph
 
@@ -433,14 +454,13 @@ contains
 
     write(stdOut,*)
     select case(elph%model)
-    case(interaction_models%local)
+    case(interaction_models%dephdiagonal)
       write(stdOut,*) 'Setting local fully diagonal (FD) BP dephasing model'
-      !write(stdOut,*) 'coupling=',elph%coupling
       call set_bp_dephasing(negf, elph%coupling)
-    case(interaction_models%semilocal)
+    case(interaction_models%dephatomblock)
       write(stdOut,*) 'Setting local block diagonal (BD) BP dephasing model'
       call error('NOT IMPLEMENTED! INTERRUPTED!')
-    case(interaction_models%overlap)
+    case(interaction_models%dephoverlap)
       write(stdOut,*) 'Setting overlap mask (OM) block diagonal BP dephasing model'
       call error('NOT IMPLEMENTED! INTERRUPTED!')
     case default
@@ -500,7 +520,7 @@ contains
 
 
   !> Initialise the structures for the libNEGF library
-  subroutine setup_str(this, denseDescr, transpar, greendens, iNeigh, nNeigh, img2CentCell)
+  subroutine setup_str(this, denseDescr, transpar, greendens, coords, iNeigh, nNeigh, img2CentCell)
 
     !> Instance.
     class(TNegfInt), intent(inout) :: this
@@ -513,6 +533,9 @@ contains
 
     !> Green's function calculational parameters
     Type(TNEGFGreenDensInfo) :: greendens
+
+    !> atomic coordinates as local basis centers
+    real(dp), intent(in) :: coords(:,:)
 
     !> number of neighbours for each atom
     Integer, intent(in) :: nNeigh(:)
@@ -655,7 +678,27 @@ contains
 
     call init_structure(this%negf, ncont, surf_start, surf_end, cont_end, nbl, PL_end, cblk)
 
+    call init_basis(this%negf, coords, iatm2, densedescr%iatomstart)  
+
   end subroutine setup_str
+
+  !> Initialise the structures for the libNEGF library
+  subroutine setup_kpoints(this, kpoints, kweights, local_kindex)
+    !> Instance.
+    class(TNegfInt), intent(inout) :: this
+    
+    !> global array of kpoints
+    real(dp), intent(in) :: kpoints(:,:)
+    
+    !> global array of weights 
+    real(dp), intent(in) :: kweights(:)
+    
+    !> index of kpoints in the array
+    integer, intent(in) :: local_kindex(:)
+  
+    call set_kpoints(this%negf, kpoints, kweights, local_kindex)
+
+  end subroutine setup_kpoints
 
 
   !> Subroutine to check the principal layer (PL) definitions

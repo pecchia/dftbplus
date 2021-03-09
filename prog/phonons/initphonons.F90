@@ -1434,9 +1434,9 @@ contains
       ! As in Numerical Heat transfer, Part B, 51:333, 2007, Taylor&Francis.    
       ! Here Delta is just a dimensionless scaling factor
       call getChildValue(pValue, "Delta", tundos%delta, 0.0001_dp)
-      ! We set a cutoff frequency of 2000 cm^-1. 
+      ! We set a cutoff frequency of 4000 cm^-1. 
       call getChildValue(pValue, "Wmax", tundos%wmax, &
-          &0.009_dp, modifier=modif, child=field)
+          &0.018_dp, modifier=modif, child=field)
       call convertByMul(char(modif), energyUnits, field, tundos%delta)
       tundos%deltaModel=2
       ! If Emax >> Wmax delta becomes negative

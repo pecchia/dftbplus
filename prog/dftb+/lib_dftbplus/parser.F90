@@ -179,16 +179,17 @@ contains
       input%transpar%idxdevice(2) = input%geom%nAtom
     end if
 
-    call getChild(root, "Dephasing", child, requested=.false.)
-    if (associated(child)) then
-      call detailedError(child, "Be patient... Dephasing feature will be available soon!")
-      !call readDephasing(child, input%slako%orb, input%geom, input%transpar, input%ginfo%tundos)
-    end if
-
     ! electronic Hamiltonian
     call getChildValue(root, "Hamiltonian", hamNode)
     call readHamiltonian(hamNode, input%ctrl, input%geom, input%slako, input%transpar,&
         & input%ginfo%greendens, input%poisson)
+
+    ! Dephasing after Hamiltonian is ok?
+    call getChild(root, "Dephasing", child, requested=.false.)
+    if (associated(child)) then
+      !call detailedError(child, "Be patient... Dephasing feature will be available soon!")
+      call readDephasing(child, input%slako%orb, input%geom, input%transpar, input%ginfo%tundos)
+    end if
 
   #:else
 
@@ -2450,6 +2451,7 @@ contains
         call detailederror(node, "transportonly cannot be used when "// &
             &  "task = contactHamiltonian")
       end if
+      ! We read the Green function block to enable local currents
       call readGreensFunction(value1, greendens, tp, ctrl%tempElec)
       ctrl%solver%isolver = electronicSolverTypes%OnlyTransport
       ctrl%tFixEf = .true.
@@ -5640,14 +5642,6 @@ contains
       if (.not.associated(pTmp)) then
         call setChildValue(pNode, "FirstLayerAtoms", greendens%PL)
       end if
-      !call getChild(pNode, "ContactPLs", pTmp, requested=.false.)
-      !if (associated(pTmp)) then
-      !  call init(li)
-      !  call getChildValue(pTmp, "", li)
-      !  allocate(transpar%cblk(len(li)))
-      !  call asArray(li,transpar%cblk)
-      !  call destruct(li)
-      !end if
       allocate(greendens%kbT(1))
       greendens%kbT(:) = tempElec
     else
@@ -5675,63 +5669,63 @@ contains
         & child=field)
     call convertByMul(char(modifier), energyUnits, field, greendens%enLow)
     call getChildValue(pNode, "FermiCutoff", greendens%nkT, 10)
-      ! Fermi energy had not been set by other means yet
+    ! Fermi energy had not been set by other means yet
 
-      ! Non equilibrium integration along real axis:
-      ! The code will perform the integration if the number of points is larger
-      ! than zero, no matter if there's bias or not.
-      ! Therefore I restored the default on the energy step, as it works at zero
-      ! bias and it scales flawlessy with increasing bias
-      ! It is still allowed to directly set the number of points, if prefered
-      ! libNEGF only wants the number of points in input
-      call getChild(pNode, "RealAxisPoints", child1, requested=.false.)
-      call getChild(pNode, "RealAxisStep", child2, requested=.false., &
-          & modifier=buffer)
-      realAxisConv = .false.
-      ! Set a bool to verify if all contacts are at the same potential (if so,
-      ! no points are needed)
-      equilibrium = .true.
-      do ii = 2, transpar%ncont
-        if (transpar%contacts(1)%potential .ne. transpar%contacts(ii)%potential &
-           & .or. transpar%contacts(1)%kbT .ne. transpar%contacts(ii)%kbT ) then
-           equilibrium = .false.
-        end if
-      end do
+    ! Non equilibrium integration along real axis:
+    ! The code will perform the integration if the number of points is larger
+    ! than zero, no matter if there's bias or not.
+    ! Therefore I restored the default on the energy step, as it works at zero
+    ! bias and it scales flawlessy with increasing bias
+    ! It is still allowed to directly set the number of points, if prefered
+    ! libNEGF only wants the number of points in input
+    call getChild(pNode, "RealAxisPoints", child1, requested=.false.)
+    call getChild(pNode, "RealAxisStep", child2, requested=.false., &
+        & modifier=buffer)
+    realAxisConv = .false.
+    ! Set a bool to verify if all contacts are at the same potential (if so,
+    ! no points are needed)
+    equilibrium = .true.
+    do ii = 2, transpar%ncont
+      if (transpar%contacts(1)%potential .ne. transpar%contacts(ii)%potential &
+         & .or. transpar%contacts(1)%kbT .ne. transpar%contacts(ii)%kbT ) then
+         equilibrium = .false.
+      end if
+    end do
 
-      ! Both Points and Step cannot be specified
-      if  (associated (child1) .and. associated(child2)) then
-        call detailedError(child1, "RealAxisPoints and RealAxisStep " &
-                            &// " cannot be specified together.")
-      ! If only one is specified, take it as valid value
-      else if (associated(child1)) then
-        call getChildValue(pNode, "RealAxisPoints", greendens%nP(3))
-      else if (associated(child2)) then
-        call getChildValue(pNode, "RealAxisStep", Estep, child=child2, &
-             & modifier=modifier)
-        call convertByMul(char(modifier), energyUnits, child2, Estep)
-        realAxisConv = .true.
-      ! If the system is under equilibrium we set the number of
-      ! points to zero
-      else if (equilibrium) then
-        call getChildValue(pNode, "RealAxisPoints", greendens%nP(3), &
-          & 0, child=child1)
-      else
-        !Default is a point every 1500H
-        call getChildValue(pNode, "RealAxisStep", Estep, 6.65e-4_dp, &
-                          &modifier=modifier, child=child2)
-        realAxisConv = .true.
-      end if
-      ! RealAxisConv means that we have a step and we convert it in a number
-      ! of points
-      if (realAxisConv) then
-        defValue = int(1.0_dp/Estep &
-          & * (maxval(transpar%contacts(:)%potential) &
-          & - minval(transpar%contacts(:)%potential) + &
-          & 2 * greendens%nKT * maxval(greendens%kbT)))
-        greendens%nP(3) = defvalue
-        !call getChildValue(pNode, "RealAxisPoints", greendens%nP(3), &
-        !    & defvalue, child=child1)
-      end if
+    ! Both Points and Step cannot be specified
+    if  (associated (child1) .and. associated(child2)) then
+      call detailedError(child1, "RealAxisPoints and RealAxisStep " &
+                          &// " cannot be specified together.")
+    ! If only one is specified, take it as valid value
+    else if (associated(child1)) then
+      call getChildValue(pNode, "RealAxisPoints", greendens%nP(3))
+    else if (associated(child2)) then
+      call getChildValue(pNode, "RealAxisStep", Estep, child=child2, &
+           & modifier=modifier)
+      call convertByMul(char(modifier), energyUnits, child2, Estep)
+      realAxisConv = .true.
+    ! If the system is under equilibrium we set the number of
+    ! points to zero
+    else if (equilibrium) then
+      call getChildValue(pNode, "RealAxisPoints", greendens%nP(3), &
+        & 0, child=child1)
+    else
+      !Default is a point every 1500H
+      call getChildValue(pNode, "RealAxisStep", Estep, 6.65e-4_dp, &
+                        &modifier=modifier, child=child2)
+      realAxisConv = .true.
+    end if
+    ! RealAxisConv means that we have a step and we convert it in a number
+    ! of points
+    if (realAxisConv) then
+      defValue = int(1.0_dp/Estep &
+        & * (maxval(transpar%contacts(:)%potential) &
+        & - minval(transpar%contacts(:)%potential) + &
+        & 2 * greendens%nKT * maxval(greendens%kbT)))
+      greendens%nP(3) = defvalue
+      !call getChildValue(pNode, "RealAxisPoints", greendens%nP(3), &
+      !    & defvalue, child=child1)
+    end if
 
   end subroutine readGreensFunction
 #:endif
@@ -6124,19 +6118,36 @@ contains
     type(TNEGFTunDos), intent(inout) :: tundos
 
     type(fnode), pointer :: value1, child
+    type(fnodeList), pointer :: children_el, children_inel
+    integer :: nEl, nInel, ii
 
-    call getChild(node, "VibronicElastic", child, requested=.false.)
-    if (associated(child)) then
-      tp%tDephasingVE = .true.
-      call readElPh(child, tundos%elph, geom, orb, tp)
-    end if
+    call getChildren(node, "Elastic", children_el)
+    nEl = getLength(children_el)
+    call getChildren(node, "Inelastic", children_inel)
+    nInel = getLength(children_inel)
 
-    call getChildValue(node, "BuettikerProbes", value1, "", child=child, &
-        &allowEmptyValue=.true., dummyValue=.true.)
-    if (associated(value1)) then
-      tp%tDephasingBP = .true.
-      call readDephasingBP(child, tundos%bp, geom, orb, tp)
-    end if
+    allocate(tundos%elph(nEl+nInel))
+
+    do ii = 1, nEl
+      call getItem1(children_el, ii, child)
+      if (associated(child)) then
+        call readElastic(child, tundos%elph(ii), geom, orb, tp)
+      end if
+    end do
+
+    do ii = 1, nInel
+      call getItem1(children_inel, ii, child)
+      if (associated(child)) then
+        call readInelastic(child, tundos%elph(nEl+ii), geom, orb, tp)
+      end if
+    end do
+
+    !call getChildValue(node, "BuettikerProbes", value1, "", child=child, &
+    !    &allowEmptyValue=.true., dummyValue=.true.)
+    !if (associated(value1)) then
+    !  tp%tDephasingBP = .true.
+    !  call readDephasingBP(child, tundos%bp, geom, orb, tp)
+    !end if
 
     ! Lowdin transformations involve dense matrices and works only in small systems
     ! For the dftb+ official release the options are disabled
@@ -6151,7 +6162,7 @@ contains
 
 
   !> Read Electron-Phonon blocks (for density and/or current calculation)
-  subroutine readElPh(node, elph, geom, orb, tp)
+  subroutine readElastic(node, elph, geom, orb, tp)
 
     !> Input node in the tree
     type(fnode), pointer :: node
@@ -6169,31 +6180,117 @@ contains
     type(TTransPar), intent(in) :: tp
 
 
+    type(fnode), pointer :: field, child, child2
+    type(string) :: modifier, dephtype
     logical :: block_model, semilocal_model
 
+
+    call getChildValue(node, "", field, child=child)
+    call getNodeName2(field, dephtype)
+
+    select case (char(dephtype))
+    case ("diagonal")
+      elph%model = interaction_models%dephdiagonal
+      call getChild(child, "Diagonal", child2)
+      call read_common_part(child2)
+    case ("atomblock")
+      elph%model = interaction_models%dephatomblock
+      call getChild(child, "AtomBlock", child2)
+      call read_common_part(child2)
+    case ("overlap")
+      elph%model = interaction_models%dephoverlap
+      call getChild(child, "Overlap", child2)
+      call read_common_part(child2)
+    case default
+      call detailedError(child,"unkown dephasing type: "//char(dephtype))
+    end select
+
     elph%defined = .true.
-    !! Only local el-ph model is defined (elastic for now)
-    elph%model = 1
 
-    call getChildValue(node, "MaxSCBAIterations", elph%scba_niter, default=100)
-    call getChildValue(node, "SCBATolerance", elph%scba_tol, default=1.0d-7)
-    call getChildValue(node, "atomBlock", block_model, default=.false.)
-    if (block_model) then
-      elph%model = 2
-    endif
+    contains
+    subroutine read_common_part(node)
+      type(fnode), pointer :: node
 
-    !BUG: semilocal model crashes because of access of S before its allocation
-    !     this because initDephasing was moved into initprogram
-    call getChildValue(node, "semiLocal", semilocal_model, default=.false.)
-    if (semilocal_model) then
-      call detailedError(node, "semilocal dephasing causes crash and has been "//&
-           & "temporarily disabled")
-      elph%model = 3
-    endif
+      call getChildValue(node, "MaxSCBAIterations", elph%scba_niter, default=100)
+      call getChildValue(node, "SCBATolerance", elph%scba_tol, default=1.0d-7)
+      call readCoupling(node, elph, geom, orb, tp)
 
-    call readCoupling(node, elph, geom, orb, tp)
+    end subroutine read_common_part
 
-  end subroutine readElPh
+  end subroutine readElastic
+
+  !> Read Electron-Phonon blocks (for density and/or current calculation)
+  subroutine readInelastic(node, elph, geom, orb, tp)
+
+    !> Input node in the tree
+    type(fnode), pointer :: node
+
+    !> container for electron-phonon parameters
+    type(TElPh), intent(inout) :: elph
+
+    !> Geometry type
+    type(TGeometry), intent(in) :: geom
+
+    !> Orbitals infos
+    type(TOrbitals), intent(in) :: orb
+
+    !> Transport parameter type
+    type(TTransPar), intent(in) :: tp
+
+
+    type(fnode), pointer :: field, child, child2
+    type(string) :: modifier, phonontype
+    real(dp) :: tmp
+    elph%defined = .true.
+
+    ! READ NONPOLAR-OPTICAL, POLAR-OPTICAL
+    call getChildValue(node, "", field, child=child)
+    call getNodeName2(field, phonontype)
+
+    select case (char(phonontype))
+    case ("polaroptical")
+      elph%model = interaction_models%polaroptical
+      call getChild(child, "PolarOptical", child2)
+      call read_common_part(child2)
+      call getChildValue(child2, "EpsInfinity", elph%eps_inf, default=1.0_dp)
+      print*,'epsilon',elph%eps_inf
+      call getChildValue(child2, "Eps0", elph%eps_r, default=1.0_dp)
+      call getChildValue(child2, "ScreeningLength", tmp, 10.0_dp, modifier=modifier,&
+          & child=field)
+      call convertByMul(char(modifier), lengthUnits, field, tmp)
+      elph%q0 = 1.0_dp/tmp
+    case ("NonPolarOptical")
+      elph%model = interaction_models%nonpolaroptical
+      call getChild(child, "NonPolarOptical", child2)
+      call read_common_part(child2)
+      call getChildValue(child2, "DeformationPotential", elph%D0, 0.0_dp, modifier=modifier,&
+            & child=field)
+      call convertByMul(char(modifier), energyUnits, field, elph%D0)
+    case default
+      call detailedError(child,"unkown inelastic phonon type: "//char(phonontype))
+    end select
+
+    contains
+    subroutine read_common_part(node)
+      type(fnode), pointer :: node
+
+      type(fnode), pointer :: field
+      type(string) :: modifier
+      real(dp) :: tmp
+
+      call getChildValue(node, "MaxSCBAIterations", elph%scba_niter, default=100)
+      call getChildValue(node, "SCBATolerance", elph%scba_tol, default=1.0d-7)
+      call getChildValue(node, "PhononFrequency", tmp, 0.0_dp, modifier=modifier,&
+           & child=field)
+      call convertByMul(char(modifier), energyUnits, field, tmp)
+      elph%wq = tmp
+      call getChildValue(node, "Umklapp", elph%tUmklapp, .false.)
+      call getChildValue(node, "KSymmetry", elph%tKSymmetry, .true.)
+
+      call readCoupling(node, elph, geom, orb, tp)
+    end subroutine read_common_part
+
+  end subroutine readInelastic
 
 
   !> Read Buettiker probe dephasing blocks (for density and/or current calculation)
@@ -6237,21 +6334,18 @@ contains
       call detailedError(dephModel,"unkown model")
     end select
 
-    elph%model = 1
+    elph%model = interaction_models%dephdiagonal
 
     call getChildValue(dephModel, "MaxSCBAIterations", elph%scba_niter, default=100)
 
     call getChildValue(dephModel, "atomBlock", block_model, default=.false.)
     if (block_model) then
-      elph%model = 2
+      elph%model = interaction_models%dephatomblock
     endif
 
-    !BUG: semilocal model crashes because of access of S before its allocation
-    !     this because initDephasing occurs in initprogram
     call getChildValue(dephModel, "semiLocal", semilocal_model, default=.false.)
     if (semilocal_model) then
-      call detailedError(dephModel, "semilocal dephasing is not working yet")
-      elph%model = 3
+      elph%model = interaction_models%dephoverlap
     endif
 
     call readCoupling(dephModel, elph, geom, orb, tp)
@@ -6296,6 +6390,7 @@ contains
       atm_range(1) = 1
       atm_range(2) = geom%nAtom
     endif
+
     do ii=atm_range(1), atm_range(2)
       norbs = norbs + orb%nOrbAtom(ii)
     enddo
@@ -6307,24 +6402,16 @@ contains
     call getChildValue(node, "Coupling", val, "", child=child, &
         & allowEmptyValue=.true., modifier=modifier, dummyValue=.true., list=.false.)
 
-    call getNodeName(val, method)
-
-    ! This reads also things like:  "Coupling [eV] = 0.34"
-    !if (is_numeric(char(method))) then
-    !  call getChildValue(node, "Coupling", rTmp, child=field)
-    !  call convertByMul(char(modifier), energyUnits, field, rTmp)
-    !  elph%coupling = rTmp
-    !  return
-    !end if
+    call getNodeName2(val, method)
 
     select case (char(method))
     case ("allorbitals")
-      call getChild(child, "AllOrbitals", child2, requested=.false.)
+      call getChild(child, "AllOrbitals", child2)
       call getChildValue(child2, "", elph%coupling, child=field)
       call convertByMul(char(modifier), energyUnits, field, elph%coupling)
 
     case ("atomcoupling")
-      call getChild(child, "AtomCoupling", child2, requested=.false.)
+      call getChild(child, "AtomCoupling", child2)
       allocate(atmCoupling(atm_range(2)-atm_range(1)+1))
       atmCoupling = 0.d0
       call getChildren(child2, "AtomList", children)
@@ -6356,13 +6443,18 @@ contains
       enddo
       deallocate(atmCoupling)
 
+    case (textNodeName)
+      call getChildValue(node, "Coupling", rTmp, child=field, modifier=modifier)
+      call convertByMul(char(modifier), energyUnits, field, rTmp)
+      elph%coupling = rTmp
+
     case ("constant")
       call getChildValue(child, "Constant", rtmp, child=field)
       call convertByMul(char(modifier), energyUnits, field, rTmp)
       elph%coupling = rTmp
 
     case default
-      call detailedError(node, "Coupling definition unknown")
+      call detailedError(node, "Coupling definition unknown: "//char(method))
     end select
 
   end subroutine readCoupling

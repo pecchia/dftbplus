@@ -54,8 +54,11 @@ Hamiltonian = DFTB {
     #MinimalGrid [Angstrom] = 0.5 0.5 0.5
     #SavePotential = Yes
   }
-  Eigensolver = TransportOnly{}
-  #Eigensolver = GreensFunction {}
+
+  Solver = TransportOnly{
+    Delta = 1e-6
+  }
+  
   #Mixer = Broyden {
   #  MixingParameter = 0.02
   #}
@@ -65,8 +68,15 @@ Hamiltonian = DFTB {
 # NOTE: Dephasing is not working yet
 # ************************************  
 Dephasing{ 
- VibronicElastic {
-   Coupling [eV] = Constant { 0.5 }
+ Elastic {
+   #Coupling [eV] = Constant { 0.5 }
+   Coupling [eV] = 0.5
+   MaxSCBAIterations = 100
+ }
+ Inelastic = PolarOptical{
+   PhononFrequency [eV] = 0.055
+   #Coupling [eV] = Constant { 0.5 }
+   Coupling [eV] = 0.5
    MaxSCBAIterations = 100
  }
 }
@@ -74,6 +84,7 @@ Dephasing{
 Analysis = {
   TunnelingAndDos {
     Verbosity = 101
+    Delta = 1e-6
     EnergyRange [eV] = -9.  -2.   
     EnergyStep [eV] =0.02
     Region = {
