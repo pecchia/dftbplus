@@ -15,7 +15,7 @@ module dftbp_rs_linearresponse
   use dftbp_arpack
   use dftbp_commontypes
   use dftbp_slakoCont
-  use dftbp_shortgamma
+  use dftbp_shortgammafuncs, only : expGammaPrime
   use dftbp_accuracy
   use dftbp_constants, only: Hartree__eV, au__Debye
   use dftbp_nonscc, only: TNonSccDiff
@@ -65,8 +65,6 @@ module dftbp_rs_linearresponse
 
   !> Maximal allowed iteration in the ARPACK solver.
   integer, parameter :: MAX_AR_ITER = 300
-
-  character(lc) :: tmpStr
 
   !> Communication with ARPACK for progress information
   integer :: ndigit
@@ -827,6 +825,7 @@ contains
 
     !> aux variables
     integer :: mu, nu
+    character(lc) :: tmpStr
 
     ! For now, spin-polarized calculation not supported
     tSpin = .false.

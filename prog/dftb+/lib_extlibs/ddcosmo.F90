@@ -1,29 +1,18 @@
 !--------------------------------------------------------------------------------------------------!
 !  DFTB+: general package for performing fast atomistic simulations                                !
-!  Copyright (C) 2006 - 2020  DFTB+ developers group                                               !
+!  Copyright (C) 2006 - 2021  DFTB+ developers group                                               !
 !                                                                                                  !
 !  See the LICENSE file for terms of usage and distribution.                                       !
 !--------------------------------------------------------------------------------------------------!
 
-#:include 'common.fypp'
-
-!> MAGMA GPU interface library
-module dftbp_magmahelper
-#:if WITH_GPU
-  use device_info
-#:endif
+!> Proxy module to ddCOSMO implementation
+module dftbp_extlibs_ddcosmo
+  use ddcosmo_core, only : TDomainDecomposition, TDomainDecompositionInput, &
+      & TDomainDecomposition_init, hsnorm, calcv, intrhs, prtsph, adjrhs, wghpot, &
+      & ddupdate, fdoka, fdokb, fdoga
+  use ddcosmo_solver, only : jacobi_diis, lx, lstarx, ldm1x, hnorm
   implicit none
+  
+  public
 
-#:if WITH_GPU
-
-  !> Whether code was built with GPU support
-  logical, parameter :: withGPU = .true.
-
-#:else
-
-  !> Whether code was built with GPU support
-  logical, parameter :: withGPU = .false.
-
-#:endif
-
-end module dftbp_magmahelper
+end module dftbp_extlibs_ddcosmo

@@ -14,7 +14,7 @@ module dftbp_linrespgrad
   use dftbp_linrespcommon
   use dftbp_commontypes
   use dftbp_slakocont
-  use dftbp_shortgamma
+  use dftbp_shortgammafuncs, only : expGammaPrime
   use dftbp_accuracy
   use dftbp_constants, only : Hartree__eV, au__Debye
   use dftbp_nonscc, only : TNonSccDiff
@@ -33,8 +33,6 @@ module dftbp_linrespgrad
   private
 
   public :: LinRespGrad_old
-
-  character(lc) :: tmpStr
 
   !> Output files for results
   character(*), parameter :: transitionsOut = "TRA.DAT"
@@ -180,6 +178,7 @@ contains
     integer :: i, j, iSpin, isym, iLev, nStartLev, nEndLev
     integer :: nSpin
     character :: sym
+    character(lc) :: tmpStr
 
     real(dp) :: energyThreshold
 
@@ -714,6 +713,7 @@ contains
 
     integer :: iState
     real(dp), allocatable :: Hv(:), orthnorm(:,:)
+    character(lc) :: tmpStr
 
     nexc = size(eval)
     natom = size(gammaMat, dim=1)

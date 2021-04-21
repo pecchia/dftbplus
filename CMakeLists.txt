@@ -7,7 +7,7 @@ include(DftbPlusUtils)
 dftbp_ensure_out_of_source_build()
 dftbp_load_build_settings()
 
-set(DFTBPLUS_VERSION "20.1")
+set(DFTBPLUS_VERSION "20.2.1")
 
 project(dftbplus VERSION ${DFTBPLUS_VERSION} LANGUAGES Fortran C)
 
@@ -30,14 +30,12 @@ if(WITH_API)
   dftbp_get_api_version(API_VERSION API_VERSION_MAJOR API_VERSION_MINOR API_VERSION_PATCH)
 endif()
 
-find_package(MPI QUIET)
-if(WITH_MPI AND NOT MPI_FORTRAN_FOUND)
-  message(FATAL_ERROR "Compiler ${CMAKE_Fortran_COMPILER} is not MPI capable but is specified for "
-    "a WITH_MPI=TRUE build")
-elseif(NOT WITH_MPI AND MPI_FORTRAN_FOUND)
-  message(WARNING "MPI enabled compiler ${CMAKE_Fortran_COMPILER} found for a non-MPI build. Your "
-    "build will NOT be MPI-parallelised. Set WITH_MPI=TRUE in order to obtain an MPI-parallelised "
-    "build.")
+if(WITH_MPI)
+  find_package(MPI REQUIRED)
+  if(NOT MPI_FORTRAN_FOUND)
+    message(FATAL_ERROR "Compiler ${CMAKE_Fortran_COMPILER} is not MPI capable but is specified "
+      "for a WITH_MPI=TRUE build")
+  endif()
 endif()
 
 if(WITH_OMP AND NOT TARGET OpenMP::OpenMP_Fortran)
@@ -142,6 +140,9 @@ include(GNUInstallDirs)
 
 add_subdirectory(external/xmlf90 EXCLUDE_FROM_ALL)
 
+# Include ddCOSMO library
+add_subdirectory(external/ddcosmo EXCLUDE_FROM_ALL)
+
 if(WITH_SOCKETS)
   add_subdirectory(external/fsockets EXCLUDE_FROM_ALL)
 endif()
@@ -157,6 +158,9 @@ if(WITH_MPI)
   set(MPIFX_GIT_TAG "0cb07ee08cbb20f3f7bb2527152a4ec317c579ad")  # do not change manually!
   dftbp_config_hybrid_dependency(MpiFx MpiFx::MpiFx "${HYBRID_CONFIG_METHODS}" "QUIET" 
     external/mpifx "${exclude}" "${MPIFX_GIT_REPOSITORY}" "${MPIFX_GIT_TAG}")
+
+  # Find ScaLAPACK to make sure, all components (e.g. ScalapackFx, MBD) use the same ScaLAPACK
+  find_package(CustomScalapack REQUIRED)
   
   set(SCALAPACKFX_GIT_REPOSITORY "https://github.com/dftbplus/scalapackfx.git")
   set(SCALAPACKFX_GIT_TAG "cd7c2a789e7788fc42ea97cbfe92b5ea15f84ab7")  # do not change manually!
@@ -169,7 +173,7 @@ endif()
 # MBD must be invoked *after* Scalapack has been found by ScalapackFx
 if(WITH_MBD)
   set(MBD_GIT_REPOSITORY "https://github.com/jhrmnn/libmbd.git")
-  set(MBD_GIT_TAG "4862bbd9b181956d3280acd9a04ea18799783cfb")  # do not change manually!
+  set(MBD_GIT_TAG "82005cbb65bdf5d32ca021848eec8f19da956a77")  # do not change manually!
   dftbp_config_hybrid_dependency(Mbd Mbd::Mbd "${HYBRID_CONFIG_METHODS}" "QUIET" external/mbd
     "${exclude}" "${MBD_GIT_REPOSITORY}" "${MBD_GIT_TAG}")
   #list(APPEND PKG_CONFIG_REQUIRES mbd)
@@ -177,7 +181,7 @@ endif()
 
 if(WITH_TRANSPORT)
   set(LIBNEGF_GIT_REPOSITORY "https://github.com/libnegf/libnegf.git")
-  set(LIBNEGF_GIT_TAG "3b9a727868182002d7570d2676aaf9bccb299bcc")  # do not change manually!
+  set(LIBNEGF_GIT_TAG "83d7588d3b05cf4aaf989085cea96f5dcf1b9830")  # do not change manually!
   dftbp_config_hybrid_dependency(Negf Negf::Negf "${HYBRID_CONFIG_METHODS}" "QUIET"
     external/libnegf "${exclude}" "${LIBNEGF_GIT_REPOSITORY}" "${LIBNEGF_GIT_TAG}")
   #list(APPEND PKG_CONFIG_REQUIRES negf)
@@ -189,7 +193,7 @@ add_subdirectory(external/mudpack)
 # Add internal components
 #
 add_subdirectory(prog)
-#add_subdirectory(tools)
+add_subdirectory(tools)
 
 
 #
