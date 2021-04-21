@@ -410,6 +410,7 @@ contains
     ! range of default atoms to move
     character(mc) :: atomsRange
 
+    character(mc) :: modeName
     logical :: isMaxStepNeeded
 
     atomsRange = "1:-1"
@@ -433,10 +434,14 @@ contains
     call getNodeName2(node, buffer)
     driver: select case (char(buffer))
     case ("")
+      modeName = ""
       continue
     case ("none")
+      modeName = ""
       continue
     case ("steepestdescent")
+
+      modeName = "geometry relaxation"
 
       ! Steepest downhill optimisation
       ctrl%iGeoOpt = geoOptTypes%steepestDesc
@@ -448,6 +453,8 @@ contains
 
     case ("conjugategradient")
 
+      modeName = "geometry relaxation"
+
       ! Conjugate gradient location optimisation
       ctrl%iGeoOpt = geoOptTypes%conjugateGrad
       #:if WITH_TRANSPORT
@@ -457,6 +464,8 @@ contains
       #:endif
 
     case("gdiis")
+
+      modeName = "geometry relaxation"
 
       ! Gradient DIIS optimisation, only stable in the quadratic region
       ctrl%iGeoOpt = geoOptTypes%diis
@@ -469,6 +478,8 @@ contains
       #:endif
 
     case ("lbfgs")
+
+      modeName = "geometry relaxation"
 
       ctrl%iGeoOpt = geoOptTypes%lbfgs
 
@@ -493,6 +504,8 @@ contains
 
     case ("fire")
 
+      modeName = "geometry relaxation"
+
       ctrl%iGeoOpt = geoOptTypes%fire
       #:if WITH_TRANSPORT
       call commonGeoOptions(node, ctrl, geom, transpar, .false.)
@@ -505,11 +518,13 @@ contains
     case("secondderivatives")
       ! currently only numerical derivatives of forces is implemented
 
+      modeName = "second derivatives"
+
       ctrl%tDerivs = .true.
       ctrl%tForces = .true.
       call getChildValue(node, "Atoms", buffer2, trim(atomsRange), child=child, &
           &multiple=.true.)
-      call convAtomRangeToInt(char(buffer2), geom%speciesNames, geom%species, child,&
+      call getSelectedAtomIndices(child, char(buffer2), geom%speciesNames, geom%species, &
           & ctrl%indMovedAtom)
       ctrl%nrMoved = size(ctrl%indMovedAtom)
       if (ctrl%nrMoved == 0) then
@@ -523,13 +538,15 @@ contains
     case ("velocityverlet")
       ! molecular dynamics
 
+      modeName = "molecular dynamics"
+
       ctrl%tForces = .true.
       ctrl%tMD = .true.
 
       call getChildValue(node, "MDRestartFrequency", ctrl%restartFreq, 1)
       call getChildValue(node, "MovedAtoms", buffer2, trim(atomsRange), child=child, &
           &multiple=.true.)
-      call convAtomRangeToInt(char(buffer2), geom%speciesNames, geom%species, child,&
+      call getSelectedAtomIndices(child, char(buffer2), geom%speciesNames, geom%species, &
           & ctrl%indMovedAtom)
       ctrl%nrMoved = size(ctrl%indMovedAtom)
       if (ctrl%nrMoved == 0) then
@@ -730,6 +747,9 @@ contains
 
     case ("socket")
       ! external socket control of the run (once initialised from input)
+
+      modeName = "socket control"
+
     #:if WITH_SOCKETS
       ctrl%tForces = .true.
       allocate(ctrl%socketInput)
@@ -783,6 +803,12 @@ contains
       call detailedError(parent, "Invalid driver '" // char(buffer) // "'")
 
     end select driver
+
+  #:if WITH_TRANSPORT
+    if (ctrl%solver%isolver == electronicSolverTypes%OnlyTransport .and. trim(modeName) /= "") then
+      call detailederror(node, "transportOnly solver cannot be used with "//trim(modeName))
+    end if
+  #:endif
 
   end subroutine readDriver
 
@@ -853,7 +879,7 @@ contains
     end if
     call getChildValue(node, "MovedAtoms", buffer2, trim(atomsRange), child=child, &
         &multiple=.true.)
-    call convAtomRangeToInt(char(buffer2), geom%speciesNames, geom%species, child,&
+    call getSelectedAtomIndices(child, char(buffer2), geom%speciesNames, geom%species,&
         & ctrl%indMovedAtom)
 
     ctrl%nrMoved = size(ctrl%indMovedAtom)
@@ -1097,7 +1123,7 @@ contains
     do ii = 1, getLength(children)
       call getItem1(children, ii, child2)
       call getChildValue(child2, "Atoms", buffer, child=child3, multiple=.true.)
-      call convAtomRangeToInt(char(buffer), geo%speciesNames, geo%species, child3, pTmpI1)
+      call getSelectedAtomIndices(child3, char(buffer), geo%speciesNames, geo%species, pTmpI1)
       call getChildValue(child2, "MassPerAtom", rTmp, modifier=modifier, child=child)
       call convertByMul(char(modifier), massUnits, child, rTmp)
       do jj = 1, size(pTmpI1)
@@ -2443,12 +2469,8 @@ contains
       ! fixEf also avoids checks of total charge in initQFromFile
       ctrl%tFixEf = .true.
     case ("transportonly")
-      if (ctrl%isGeoOpt .or. ctrl%tMD) then
-        call detailederror(node, "transportonly cannot be used with relaxations or md")
-      end if
       if (tp%defined .and. .not.tp%taskUpload) then
-        call detailederror(node, "transportonly cannot be used when "// &
-            &  "task = contactHamiltonian")
+        call detailederror(node, "transportonly cannot be used when task = contactHamiltonian")
       end if
       call readGreensFunction(value1, greendens, tp, ctrl%tempElec)
       ctrl%solver%isolver = electronicSolverTypes%OnlyTransport
@@ -2957,7 +2979,7 @@ contains
       do ii = 1, getLength(children)
         call getItem1(children, ii, child2)
         call getChildValue(child2, "Atoms", buffer, child=child3, multiple=.true.)
-        call convAtomRangeToInt(char(buffer), geo%speciesNames, geo%species, child3, pTmpI1)
+        call getSelectedAtomIndices(child3, char(buffer), geo%speciesNames, geo%species, pTmpI1)
         call getChildValue(child2, "ChargePerAtom", rTmp)
         do jj = 1, size(pTmpI1)
           iAt = pTmpI1(jj)
@@ -3017,7 +3039,7 @@ contains
       do ii = 1, getLength(children)
         call getItem1(children, ii, child2)
         call getChildValue(child2, "Atoms", buffer, child=child3, multiple=.true.)
-        call convAtomRangeToInt(char(buffer), geo%speciesNames, geo%species, child3, pTmpI1)
+        call getSelectedAtomIndices(child3, char(buffer), geo%speciesNames, geo%species, pTmpI1)
         call getChildValue(child2, "SpinPerAtom", rTmp)
         do jj = 1, size(pTmpI1)
           iAt = pTmpI1(jj)
@@ -4108,7 +4130,10 @@ contains
     select case(char(buffer))
     case default
       call detailedError(value1, "Unknown method '"//char(buffer)//"' for ChargeModel")
+    case ("selfconsistent")
+      input%selfConsistent = .true.
     case ("eeq")
+      allocate(input%eeqInput)
       allocate(d4Chi(geo%nSpecies))
       d4Chi(:) = getEeqChi(geo%speciesNames)
       allocate(d4Gam(geo%nSpecies))
@@ -4705,7 +4730,7 @@ contains
     character(lc) :: strTmp
     type(TListRealR1) :: lr1
     logical :: tPipekDense
-    logical :: tWriteBandDatDef, tHaveEigenDecomposition
+    logical :: tWriteBandDatDef, tHaveEigenDecomposition, tHaveDensityMatrix
 
     tHaveEigenDecomposition = .false.
     if (any(ctrl%solver%isolver == [electronicSolverTypes%qr,&
@@ -4713,6 +4738,7 @@ contains
         & electronicSolverTypes%elpa])) then
       tHaveEigenDecomposition = .true.
     end if
+    tHaveDensityMatrix = ctrl%solver%isolver /= electronicSolverTypes%OnlyTransport
 
     if (tHaveEigenDecomposition) then
 
@@ -4729,7 +4755,7 @@ contains
         do iReg = 1, nReg
           call getItem1(children, iReg, child2)
           call getChildValue(child2, "Atoms", buffer, child=child3, multiple=.true.)
-          call convAtomRangeToInt(char(buffer), geo%speciesNames, geo%species, child3, pTmpI1)
+          call getSelectedAtomIndices(child3, char(buffer), geo%speciesNames, geo%species, pTmpI1)
           call append(ctrl%iAtInRegion, pTmpI1)
           call getChildValue(child2, "ShellResolved", &
               & ctrl%tShellResInRegion(iReg), .false., child=child3)
@@ -4802,24 +4828,53 @@ contains
 
       call getChildValue(node, "WriteBandOut", ctrl%tWriteBandDat, tWriteBandDatDef)
 
-    end if
-
-    ! Is this compatible with Poisson solver use?
-    call readElectrostaticPotential(node, geo, ctrl)
-
-    call getChildValue(node, "MullikenAnalysis", ctrl%tPrintMulliken, .true.)
-    if (ctrl%tPrintMulliken) then
-      call getChildValue(node, "WriteNetCharges", ctrl%tNetAtomCharges, default=.false.)
-      call getChild(node, "CM5", child, requested=.false.)
+      ! electric field polarisability of system
+      call getChild(node, "Polarisability", child=child, requested=.false.)
       if (associated(child)) then
-        allocate(ctrl%cm5Input)
-        call readCM5(child, ctrl%cm5Input, geo)
+        ctrl%isDFTBPT = .true.
+        call getChildValue(child, "Static", ctrl%isStatEPerturb, .true.)
+      else
+        ctrl%isDFTBPT = .false.
       end if
-    end if
-    call getChildValue(node, "AtomResolvedEnergies", ctrl%tAtomicEnergy, &
-        &.false.)
 
-    call getChildValue(node, "CalculateForces", ctrl%tPrintForces, .false.)
+    end if
+
+    if (tHaveDensityMatrix) then
+
+      ! Is this compatible with Poisson solver use?
+      call readElectrostaticPotential(node, geo, ctrl)
+
+      call getChildValue(node, "MullikenAnalysis", ctrl%tPrintMulliken, .true.)
+      if (ctrl%tPrintMulliken) then
+        call getChildValue(node, "WriteNetCharges", ctrl%tNetAtomCharges, default=.false.)
+        call getChild(node, "CM5", child, requested=.false.)
+        if (associated(child)) then
+          allocate(ctrl%cm5Input)
+          call readCM5(child, ctrl%cm5Input, geo)
+        end if
+      end if
+      call getChildValue(node, "AtomResolvedEnergies", ctrl%tAtomicEnergy, .false.)
+
+      if (allocated(ctrl%solvInp)) then
+        call getChildValue(node, "writeCosmoFile", ctrl%tWriteCosmoFile, &
+            & allocated(ctrl%solvInp%cosmoInp), child=child)
+        if (ctrl%tWriteCosmoFile .and. .not.allocated(ctrl%solvInp%cosmoInp)) then
+          call detailedError(child, "Cosmo file can only be written for Cosmo calculations")
+        end if
+      end if
+
+      call getChildValue(node, "CalculateForces", ctrl%tPrintForces, .false.)
+
+    else
+
+      ctrl%tPrintMulliken = .false.
+      ctrl%tAtomicEnergy = .false.
+      ctrl%tPrintForces = .false.
+
+    end if
+
+
+
 
   #:if WITH_TRANSPORT
     call getChild(node, "TunnelingAndDOS", child, requested=.false.)
@@ -5185,7 +5240,7 @@ contains
       call convertByMul(char(modifier), energyUnits, child, input%omega)
       call getChildValue(value1, "Phase", input%phase, 0.0_dp)
       call getChildValue(value1, "ExcitedAtoms", buffer, "1:-1", child=child, multiple=.true.)
-      call convAtomRangeToInt(char(buffer), geom%speciesNames, geom%species, child,&
+      call getSelectedAtomIndices(child, char(buffer), geom%speciesNames, geom%species,&
           & input%indExcitedAtom)
 
       input%nExcitedAtom = size(input%indExcitedAtom)
@@ -5210,7 +5265,7 @@ contains
       call convertByMul(char(modifier), EFieldUnits, child, input%tdLaserField)
 
       call getChildValue(value1, "ExcitedAtoms", buffer, "1:-1", child=child, multiple=.true.)
-      call convAtomRangeToInt(char(buffer), geom%speciesNames, geom%species, child,&
+      call getSelectedAtomIndices(child, char(buffer), geom%speciesNames, geom%species,&
           & input%indExcitedAtom)
       input%nExcitedAtom = size(input%indExcitedAtom)
       if (input%nExcitedAtom == 0) then
@@ -5273,7 +5328,7 @@ contains
     call getChildValue(node, "IonDynamics", input%tIons, .false.)
     if (input%tIons) then
       call getChildValue(node, "MovedAtoms", buffer, "1:-1", child=child, multiple=.true.)
-      call convAtomRangeToInt(char(buffer), geom%speciesNames, geom%species, child,&
+      call getSelectedAtomIndices(child, char(buffer), geom%speciesNames, geom%species,&
           & input%indMovedAtom)
 
       input%nMovedAtom = size(input%indMovedAtom)
@@ -6330,7 +6385,7 @@ contains
       do ii = 1, getLength(children)
         call getItem1(children, ii, child3)
         call getChildValue(child3, "Atoms", buffer, child=child4, multiple=.true.)
-        call convAtomRangeToInt(char(buffer), geom%speciesNames, geom%species, child4, tmpI1)
+        call getSelectedAtomIndices(child4, char(buffer), geom%speciesNames, geom%species, tmpI1)
         call getChildValue(child3, "Value", rTmp, child=field, modifier=modifier2)
         ! If not defined, use common unit modifier defined after Coupling
         if (len(modifier2)==0) then
@@ -6779,11 +6834,9 @@ contains
     do iReg = 1, nReg
       call getItem1(children, iReg, child)
       call getChildValue(child, "Atoms", buffer, child=child2, multiple=.true.)
-      call convAtomRangeToInt(char(buffer), geo%speciesNames, geo%species, child2, tmpI1,&
-          & iShift=idxdevice(1)-1, maxRange=(idxdevice(2)-idxdevice(1)+1))
-      if (any(tmpI1<idxdevice(1)) .or. any(tmpI1>idxdevice(2))) then
-        call error("Atoms in PDOS regions must be within the device range")
-      end if
+      call getSelectedAtomIndices(child2, char(buffer), geo%speciesNames,&
+          & geo%species(idxdevice(1) : idxdevice(2)), tmpI1,&
+          & selectionRange=[idxdevice(1), idxdevice(2)], indexRange=[1, geo%nAtom])
       iAtInRegion(iReg)%data = tmpI1
       call getChildValue(child, "ShellResolved", tShellResInRegion(iReg), .false., child=child2)
       if (tShellResInRegion(iReg)) then
@@ -6906,7 +6959,7 @@ contains
     do iCustomOcc = 1, nCustomOcc
       call getItem1(nodes, iCustomOcc, node)
       call getChildValue(node, "Atoms", buffer, child=child, multiple=.true.)
-      call convAtomRangeToInt(char(buffer), geo%speciesNames, geo%species, child,&
+      call getSelectedAtomIndices(child, char(buffer), geo%speciesNames, geo%species,&
           & iAtInRegion(iCustomOcc)%data)
       if (any(atomOverriden(iAtInRegion(iCustomOcc)%data))) then
         call detailedError(child, "Atom region contains atom(s) which have&

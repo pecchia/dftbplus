@@ -105,6 +105,9 @@ module dftbp_taggedoutput
     !> Charge model 5 corrected atomic gross charges
     character(lenLabel) :: qOutAtCM5 = 'cm5_atomic_charges'
 
+    !> Gross atomic spin polarizations
+    character(lenLabel) :: spinOutAtGross  = 'gross_atomic_spins'
+
     !> numerically calculated second derivatives matrix
     character(lenLabel) :: hessianNum = 'hessian_numerical'
 
@@ -167,6 +170,21 @@ module dftbp_taggedoutput
 
     !> External electric field
     character(lenLabel) :: externField = 'external_efield'
+
+    !> Static electric polarizability from linear response/perturbation
+    character(lenLabel) :: dmudEPerturb = 'staticPolResponse'
+
+    !> Static electric polarizability from linear response/perturbation
+    character(lenLabel) :: dqdEPerturb = 'staticChargeReponse'
+
+    !> Derivatives of ground state single particle eigenvalues wrt. k
+    character(lenLabel) :: dEigenDE = 'dEidEfield'
+
+    !> Number of electrons at the Fermi energy
+    character(lenLabel) :: neFermi = 'neFermi'
+
+    !> Derivative of the Fermi energy with respect to electric field
+    character(lenLabel) :: dEfdE = 'dEfdE'
 
     !> two-electron addition/removal energies in ppRPA formalism
     character(lenLabel) :: egyppRPA = '2e_add-rem_energies'

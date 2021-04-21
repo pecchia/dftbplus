@@ -203,7 +203,14 @@ module dftbp_inputdata
     !> Localise electronic states
     logical :: tLocalise   = .false.
 
+    !> Input data for Pipek-Mezey localisation
     type(TPipekMezeyInp), allocatable :: pipekMezeyInp
+
+    !> Is a perturbation expression in use
+    logical :: isDFTBPT = .false.
+
+    !> Is this is a static electric field perturbation calculation
+    logical :: isStatEPerturb = .false.
 
     !> printing of atom resolved energies
     logical :: tAtomicEnergy = .false.
@@ -464,7 +471,8 @@ module dftbp_inputdata
 
     !> 3rd order
     real(dp), allocatable :: hubDerivs(:,:)
-    logical :: t3rd, t3rdFull
+    logical :: t3rd = .false.
+    logical :: t3rdFull = .false.
 
 
     !> XLBOMD
@@ -516,6 +524,9 @@ module dftbp_inputdata
     !> Whether Scc should be updated with the output charges (obtained after diagonalization)
     !> Could be set to .false. to prevent costly recalculations (e.g. when using Poisson-solver)
     logical :: updateSccAfterDiag = .true.
+
+    !> Write cavity information as COSMO file
+    logical :: tWriteCosmoFile = .false.
 
   end type TControl
 

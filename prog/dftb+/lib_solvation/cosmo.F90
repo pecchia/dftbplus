@@ -12,13 +12,15 @@ module dftbp_cosmo
   use dftbp_accuracy, only : dp
   use dftbp_blasroutines, only : gemv
   use dftbp_charges, only : getSummedCharges
+  use dftbp_charmanip, only : tolower
   use dftbp_commontypes, only : TOrbitals
-  use dftbp_constants, only : pi, Hartree__eV
+  use dftbp_constants, only : pi, Hartree__eV, Bohr__AA
   use dftbp_environment, only : TEnvironment
   use dftbp_extlibs_ddcosmo
   use dftbp_lebedev, only : getAngGrid, gridSize
   use dftbp_message, only : error
   use dftbp_periodic, only : TNeighbourList
+  use dftbp_sasa, only : TSASACont, TSASAInput, TSASACont_init, writeSASAContInfo
   use dftbp_solvation, only : TSolvation
   implicit none
   
@@ -36,6 +38,9 @@ module dftbp_cosmo
     !> Dielectric constant
     real(dp) :: dielectricConst
 
+    !> dielectric scaling factor on going between inside cavity (vacuum) and outside region
+    real(dp) :: keps
+
     !> Grid for numerical integration of atomic surfaces
     integer :: gridSize
 
@@ -45,6 +50,9 @@ module dftbp_cosmo
     !> Input for the domain decomposition algorithm
     type(TDomainDecompositionInput) :: ddInput
 
+    !> Input for solvent accessible surface area model
+    type(TSASAInput), allocatable :: sasaInput
+
   end type TCosmoInput
 
 
@@ -53,9 +61,6 @@ module dftbp_cosmo
 
     !> Number of atoms
     integer :: nAtom
-
-    !> Input for the domain decomposition algorithm
-    type(TDomainDecompositionInput) :: ddInput
 
     !> Domain decomposition COSMO solver
     type(TDomainDecomposition) :: ddCosmo
@@ -74,6 +79,9 @@ module dftbp_cosmo
 
     !> Dielectric constant
     real(dp) :: dielectricConst
+
+    !> scaling factor from dielectric inside cavity (vacuum) and outside region
+    real(dp) :: keps
 
     !> Energy shift to the reference system
     real(dp) :: freeEnergyShift
@@ -102,6 +110,9 @@ module dftbp_cosmo
     !> Coordinates are current
     logical :: tCoordsUpdated
 
+    !> Solvent accessible surface area model
+    type(TSASACont), allocatable :: sasaCont
+
   contains
 
     !> update internal copy of coordinates
@@ -127,6 +138,12 @@ module dftbp_cosmo
 
     !> Returns shifts per atom
     procedure :: getShifts
+
+    !> Is the electrostic field modified by this solvent model?
+    procedure :: isEFieldModified
+
+    !> Write cavity information
+    procedure :: writeCosmoFile
 
   end type TCosmo
 
@@ -165,9 +182,8 @@ contains
 
     this%nAtom = nAtom
     this%dielectricConst = input%dielectricConst
+    this%keps = input%keps
     this%freeEnergyShift = input%freeEnergyShift
-
-    this%ddInput = input%ddInput  ! FIXME
 
     allocate(this%vdwRad(nAtom))
     do iat = 1, nAtom
@@ -178,14 +194,20 @@ contains
     allocate(this%angWeight(gridSize(input%gridSize)))
     call getAngGrid(input%gridSize, this%angGrid, this%angWeight, stat)
     if (stat /= 0) then
-      call error("Could not initialize angular grid for SASA model")
+      call error("Could not initialize angular grid for COSMO model")
     end if
 
     allocate(this%chargesPerAtom(nAtom))
     allocate(this%shiftsPerAtom(nAtom))
 
-    call TDomainDecomposition_init(this%ddCosmo, this%ddInput, &
+    call TDomainDecomposition_init(this%ddCosmo, input%ddInput, &
       this%vdwRad, this%angWeight, this%angGrid)
+
+    if (allocated(input%sasaInput)) then
+       allocate(this%sasaCont)
+       call TSASACont_init(this%sasaCont, input%sasaInput, nAtom, species0, &
+           & speciesNames, latVecs)
+    end if
 
   end subroutine TCosmo_init
 
@@ -207,6 +229,14 @@ contains
         & solvation%nAtom*real(size(solvation%angWeight, dim=1), dp), "total", &
         & size(solvation%angWeight, dim=1), "per atom"
     write(unit, '(a, ":", t30, a)') "Solver", "domain decomposition"
+
+    write(unit, '(a, ":", t30)', advance='no') "SASA model"
+    if (allocated(solvation%sasaCont)) then
+      write(unit, '(a)') "Yes"
+      call writeSASAContInfo(unit, solvation%sasaCont)
+    else
+      write(unit, '(a)') "No"
+    end if
 
   end subroutine writeCosmoInfo
 
@@ -231,6 +261,10 @@ contains
 
     !> Central cell chemical species
     integer, intent(in) :: species0(:)
+
+    if (allocated(this%sasaCont)) then
+      call this%sasaCont%updateCoords(env, neighList, img2CentCell, coords, species0)
+    end if
 
     if (allocated(this%phi)) deallocate(this%phi)
     if (allocated(this%psi)) deallocate(this%psi)
@@ -260,6 +294,10 @@ contains
     !> Lattice vectors
     real(dp), intent(in) :: latVecs(:,:)
 
+    if (allocated(this%sasaCont)) then
+      call this%sasaCont%updateLatVecs(latVecs)
+    end if
+
     this%tChargesUpdated = .false.
     this%tCoordsUpdated = .false.
 
@@ -276,16 +314,20 @@ contains
     real(dp), intent(out) :: energies(:)
 
     integer :: iat
-    real(dp) :: keps
 
     @:ASSERT(this%tCoordsUpdated)
     @:ASSERT(this%tChargesUpdated)
     @:ASSERT(size(energies) == this%nAtom)
 
-    keps = 0.5_dp * ((this%dielectricConst - 1.0_dp)/this%dielectricConst)
+    if (allocated(this%sasaCont)) then
+      call this%sasaCont%getEnergies(energies)
+    else
+      energies(:) = 0.0_dp
+    end if
+
     do iat = 1, size(energies)
-      energies(iat) = keps * dot_product(this%sigma(:, iat), this%psi(:, iat)) &
-         & + this%freeEnergyShift / real(this%nAtom, dp)
+      energies(iat) = this%keps * dot_product(this%sigma(:, iat), this%psi(:, iat)) &
+         & + this%freeEnergyShift / real(this%nAtom, dp) + energies(iat)
     end do
 
   end subroutine getEnergies
@@ -316,35 +358,40 @@ contains
     real(dp), intent(inout) :: gradients(:,:)
 
     integer :: ii, iat, ig
-    real(dp) :: xx(1), esolv, keps
-    real(dp), allocatable :: fx(:, :), zeta(:), ef(:, :)
+    real(dp) :: xx(1), esolv
+    real(dp), allocatable :: fx(:, :), zeta(:), ef1(:, :), ef2(:, :)
 
     @:ASSERT(this%tCoordsUpdated)
     @:ASSERT(this%tChargesUpdated)
     @:ASSERT(all(shape(gradients) == [3, this%nAtom]))
 
-    keps = 0.5_dp * ((this%dielectricConst - 1.0_dp)/this%dielectricConst)
+    if (allocated(this%sasaCont)) then
+      call this%sasaCont%addGradients(env, neighList, species, coords, img2CentCell, gradients)
+    end if
 
     allocate(fx(3, this%nAtom), zeta(this%ddCosmo%ncav), &
-      & ef(3, max(this%nAtom, this%ddCosmo%ncav)))
+      & ef1(3, this%ddCosmo%ncav), ef2(3, this%nAtom))
+
+    ! reset Psi
+    call getPsi(this%chargesPerAtom, this%psi)
 
     call solveCosmoAdjoint(this%ddCosmo, this%psi, this%s, .true., &
       & accuracy=this%ddCosmo%conv*1e-3_dp)
 
     ! reset Phi
-    call gemv(this%phi, this%jmat, this%chargesPerAtom)
+    call getPhi(this%chargesPerAtom, this%jmat, this%phi)
 
     ! now call the routine that computes the ddcosmo specific contributions
     ! to the forces.
-    call forces(this%ddCosmo, keps, this%nAtom, this%phi, this%sigma, this%s, fx)
+    call forces(this%ddCosmo, this%keps, this%phi, this%sigma, this%s, fx)
 
     ! form the "zeta" intermediate
-    call getZeta(this%ddCosmo, keps, this%s, zeta)
+    call getZeta(this%ddCosmo, this%keps, this%s, zeta)
 
     ! 1. solute's electric field at the cav points times zeta:
     !    compute the electric field
     call efld(this%nAtom, this%chargesPerAtom, this%ddCosmo%xyz, this%ddCosmo%ncav, &
-      & this%ddCosmo%ccav, ef)
+      & this%ddCosmo%ccav, ef1)
 
     ! contract it with the zeta intermediate
     ii = 0
@@ -352,19 +399,21 @@ contains
       do ig = 1, size(this%angWeight)
         if (this%ddCosmo%ui(ig, iat) > 0.0_dp) then
           ii = ii + 1
-          fx(:, iat) = fx(:, iat) - zeta(ii)*ef(:, ii)
+          fx(:, iat) = fx(:, iat) - zeta(ii)*ef1(:, ii)
         end if
       end do
     end do
 
+    @:ASSERT(ii == this%ddCOSMO%ncav)
+
     ! 2. "zeta's" electric field at the nuclei times the charges.
     !    compute the "electric field"
     call efld(this%ddCosmo%ncav, zeta, this%ddCosmo%ccav, this%nAtom, &
-      & this%ddCosmo%xyz, ef)
+      & this%ddCosmo%xyz, ef2)
 
     ! contract it with the solute's charges.
     do iat = 1, this%nAtom
-      fx(:, iat) = fx(:, iat) - ef(:, iat)*this%chargesPerAtom(iat)
+      fx(:, iat) = fx(:, iat) - ef2(:, iat)*this%chargesPerAtom(iat)
     end do
 
     gradients(:, :) = gradients(:, :) - fx
@@ -385,6 +434,12 @@ contains
     @:ASSERT(this%tChargesUpdated)
     @:ASSERT(all(shape(stress) == [3, 3]))
 
+    if (allocated(this%sasaCont)) then
+      call this%sasaCont%getStress(stress)
+    else
+      stress(:, :) = 0.0_dp
+    end if
+
   end subroutine getStress
 
 
@@ -397,7 +452,11 @@ contains
     !> Resulting cutoff
     real(dp) :: cutoff
 
-    cutoff = 0.0_dp
+    if (allocated(this%sasaCont)) then
+      cutoff = this%sasaCont%getRCutoff()
+    else
+      cutoff = 0.0_dp
+    end if
 
   end function getRCutoff
 
@@ -429,10 +488,14 @@ contains
     !> Orbital information
     type(TOrbitals), intent(in) :: orb
 
-    real(dp) :: xx(1, 1), keps
+    real(dp) :: xx(1, 1)
     logical :: restart
 
     @:ASSERT(this%tCoordsUpdated)
+
+    if (allocated(this%sasaCont)) then
+      call this%sasaCont%updateCharges(env, species, neighList, qq, q0, img2CentCell, orb)
+    end if
 
     restart = allocated(this%sigma)
     if (.not.allocated(this%sigma)) then
@@ -472,7 +535,7 @@ contains
     !> Shift per shell
     real(dp), intent(out) :: shiftPerShell(:,:)
 
-    real(dp) :: xx(1), keps
+    real(dp) :: xx(1)
     logical :: restart
 
     @:ASSERT(this%tCoordsUpdated)
@@ -480,19 +543,36 @@ contains
     @:ASSERT(size(shiftPerAtom) == this%nAtom)
     @:ASSERT(size(shiftPerShell, dim=2) == this%nAtom)
 
-    shiftPerShell(:,:) = 0.0_dp
+    if (allocated(this%sasaCont)) then
+      call this%sasaCont%getShifts(shiftPerAtom, shiftPerShell)
+    else
+      shiftPerAtom(:) = 0.0_dp
+      shiftPerShell(:,:) = 0.0_dp
+    end if
 
-    keps = 0.5_dp * ((this%dielectricConst - 1.0_dp)/this%dielectricConst)
-    shiftPerAtom(:) = keps * this%sigma(1, :) * sqrt(fourpi)
+    shiftPerAtom(:) = this%keps * this%sigma(1, :) * sqrt(fourpi) + shiftPerAtom
 
     ! we abuse Phi to store the unpacked and scaled value of s
-    call getZeta(this%ddCosmo, keps, this%s, this%phi)
+    call getZeta(this%ddCosmo, this%keps, this%s, this%phi)
     ! and contract with the Coulomb matrix
     call gemv(shiftPerAtom, this%jmat, this%phi, alpha=-1.0_dp, &
       & beta=1.0_dp, trans='t')
 
   end subroutine getShifts
 
+
+  !> Is the electrostic field modified by this solvent model?
+  function isEFieldModified(this) result(isChanged)
+
+    !> Data structure
+    class(TCosmo), intent(in) :: this
+
+    !> Has the solvent model changed the electrostatic environment
+    logical :: isChanged
+
+    isChanged = .false.
+
+  end function isEFieldModified
 
   !> Evaluate the Coulomb interactions between the atomic sides (xyz) and the
   !> surface elements of the cavity (ccav).
@@ -504,7 +584,9 @@ contains
     integer :: ic, j
     real(dp) :: vec(3), d2, d
 
-    !$omp parallel do default(shared) private(ic, j, vec, d2, d)
+    jmat(:, :) = 0.0_dp
+    !$omp parallel do default(none) schedule(runtime) collapse(2) &
+    !$omp shared(ccav, xyz, jmat) private(ic, j, vec, d2, d)
     do ic = 1, size(ccav, 2)
       do j = 1, size(xyz, 2)
         vec(:) = ccav(:, ic) - xyz(:, j)
@@ -540,6 +622,9 @@ contains
     real(dp), intent(in) :: charge(:)
     real(dp), intent(in) :: jmat(:, :)
     real(dp), intent(out) :: phi(:)
+
+    @:ASSERT(size(jmat, 1) == size(phi))
+    @:ASSERT(size(jmat, 2) == size(charge))
 
     phi(:) = 0.0_dp
 
@@ -719,13 +804,17 @@ contains
   !  1/2 f(\eps) sum w_n U_n^i Y_l^m(s_n) [S_i]_l^m
   !              l, m
   !
-  pure subroutine getZeta(ddCosmo, keps, s, zeta)
+  subroutine getZeta(ddCosmo, keps, s, zeta)
     type(TDomainDecomposition), intent(in) :: ddCosmo
     real(dp), intent(in) :: keps
-    real(dp), intent(in) :: s(ddCosmo%nylm, ddCosmo%nat)
-    real(dp), intent(inout) :: zeta(ddCosmo%ncav)
+    real(dp), intent(in) :: s(:, :) ! [ddCosmo%nylm, ddCosmo%nat]
+    real(dp), intent(inout) :: zeta(:) ! [ddCosmo%ncav]
 
     integer :: its, iat, ii
+
+    @:ASSERT(size(s, 1) == ddCosmo%nylm)
+    @:ASSERT(size(s, 2) == ddCosmo%nat)
+    @:ASSERT(size(zeta) == ddCosmo%ncav)
 
     ii = 0
     do iat = 1, ddCosmo%nat
@@ -738,18 +827,19 @@ contains
       end do
     end do
 
+    @:ASSERT(ii == ddCOSMO%ncav)
+
   end subroutine getZeta
 
 
   !> Sample driver for the calculation of the ddCOSMO forces.
-  subroutine forces(ddCosmo, keps, n, phi, sigma, s, fx)
+  subroutine forces(ddCosmo, keps, phi, sigma, s, fx)
     type(TDomainDecomposition), intent(in) :: ddCosmo
-    integer, intent(in) :: n
     real(dp), intent(in) :: keps
-    real(dp), intent(in) :: phi(ddCosmo%ncav)
-    real(dp), intent(in) :: sigma(ddCosmo%nylm, ddCosmo%nat)
-    real(dp), intent(in) :: s(ddCosmo%nylm, ddCosmo%nat)
-    real(dp), intent(inout) :: fx(3, n)
+    real(dp), intent(in) :: phi(:)
+    real(dp), intent(in) :: sigma(:, :)
+    real(dp), intent(in) :: s(:, :)
+    real(dp), intent(inout) :: fx(:, :)
 
     integer :: iat, ig, ii, c1, c2, cr
     real(dp) :: fep
@@ -757,12 +847,20 @@ contains
     real(dp), allocatable :: xi(:, :), phiexp(:, :), zeta(:), ef(:, :)
     real(dp), allocatable :: basloc(:), dbsloc(:, :), vplm(:), vcos(:), vsin(:)
 
+    @:ASSERT(size(phi) == ddCosmo%ncav)
+    @:ASSERT(size(sigma, 1) == ddCosmo%nylm)
+    @:ASSERT(size(sigma, 2) == ddCosmo%nat)
+    @:ASSERT(size(s, 1) == ddCosmo%nylm)
+    @:ASSERT(size(s, 2) == ddCosmo%nat)
+    @:ASSERT(size(fx, 2) == ddCosmo%nat)
+
     allocate (xi(ddCosmo%ngrid, ddCosmo%nat), phiexp(ddCosmo%ngrid, ddCosmo%nat))
     allocate (basloc(ddCosmo%nylm), dbsloc(3, ddCosmo%nylm), vplm(ddCosmo%nylm), &
       & vcos(ddCosmo%lmax+1), vsin(ddCosmo%lmax+1))
 
     ! compute xi:
-    !$omp parallel do default(shared) private(iat, ig)
+    !$omp parallel do default(none) collapse(2) schedule(runtime) &
+    !$omp shared(ddCosmo, s, xi) private(iat, ig)
     do iat = 1, ddCosmo%nat
       do ig = 1, ddCosmo%ngrid
         xi(ig, iat) = dot_product(s(:, iat), ddCosmo%basis(:, ig))
@@ -771,7 +869,7 @@ contains
 
     ! expand the potential on a sphere-by-sphere basis (needed for parallelism):
     ii = 0
-    phiexp = 0.0_dp
+    phiexp(:, :) = 0.0_dp
     do iat = 1, ddCosmo%nat
       do ig = 1, ddCosmo%ngrid
         if (ddCosmo%ui(ig, iat) > 0.0_dp) then
@@ -781,7 +879,7 @@ contains
       end do
     end do
 
-    fx = 0.0_dp
+    fx(:, :) = 0.0_dp
     do iat = 1, ddCosmo%nat
       call fdoka(ddCosmo, iat, sigma, xi(:, iat), basloc, dbsloc, vplm, &
         & vcos, vsin, fx(:, iat))
@@ -803,31 +901,160 @@ contains
   !  with coordinates csrc) at the ntrg target points ctrg:
   subroutine efld(nsrc, src, csrc, ntrg, ctrg, ef)
     integer, intent(in) :: nsrc, ntrg
-    real(dp), intent(in) :: src(nsrc)
-    real(dp), intent(in) :: csrc(3, nsrc)
-    real(dp), intent(in) :: ctrg(3, ntrg)
-    real(dp), intent(inout) :: ef(3, ntrg)
+    real(dp), intent(in) :: src(:)
+    real(dp), intent(in) :: csrc(:, :)
+    real(dp), intent(in) :: ctrg(:, :)
+    real(dp), intent(inout) :: ef(:, :)
 
     integer :: i, j
-    real(dp) :: vec(3), r2, rr, r3, f, e(3)
+    real(dp) :: vec(3), r2, rr, r3, f
     real(dp), parameter :: zero=0.0_dp
 
+    @:ASSERT(size(src) == size(csrc, 2))
+    @:ASSERT(size(ef, 2) == size(ctrg, 2))
+
     ef(:, :) = 0.0_dp
-    !$omp parallel do default(shared) private(j, i, vec, r2, rr, r3, e)
+    !$omp parallel do default(none) schedule(runtime) collapse(2) &
+    !$omp reduction(+:ef) shared(ntrg, nsrc, ctrg, csrc, src) &
+    !$omp private(j, i, f, vec, r2, rr, r3)
     do j = 1, ntrg
-      e(:) = 0.0_dp
       do i = 1, nsrc
         vec(:) = ctrg(:, j) - csrc(:, i)
         r2 = vec(1)**2 + vec(2)**2 + vec(3)**2
         rr = sqrt(r2)
         r3 = r2*rr
         f = src(i)/r3
-        e(:) = e(:) + f*vec
+        ef(:, j) = ef(:, j) + f*vec
       end do
-      ef(:, j) = e
     end do
 
   end subroutine efld
+
+
+  !> Write a COSMO file output
+  subroutine writeCosmoFile(this, unit, species0, speciesNames, coords0, energy)
+
+    !> COSMO container
+    class(TCosmo), intent(in) :: this
+
+    !> Formatted unit for output
+    integer, intent(in) :: unit
+
+    !> Symbols of the species
+    character(len=*), intent(in) :: speciesNames(:)
+
+    !> Species of every atom in the unit cell
+    integer, intent(in) :: species0(:)
+
+    !> Atomic coordinates
+    real(dp), intent(in) :: coords0(:,:)
+
+    !> Total energy
+    real(dp), intent(in) :: energy
+
+    integer :: ii, ig, iat
+    real(dp) :: dielEnergy
+    real(dp), allocatable :: phi(:), zeta(:), area(:)
+
+    allocate(phi(this%ddCosmo%ncav), zeta(this%ddCosmo%ncav), area(this%ddCosmo%ncav))
+    ! Reset potential on the cavity, note that the potential is expected in e/Å
+    call getPhi(this%chargesPerAtom, this%jmat, phi)
+    ii = 0
+    do iat = 1, this%ddCosmo%nat
+      do ig = 1, this%ddCosmo%ngrid
+        if (this%ddCosmo%ui(ig, iat) > 0.0_dp) then
+          ii = ii + 1
+          ! Calculate surface charge per area
+          zeta(ii) = this%ddCosmo%w(ig) * this%ddCosmo%ui(ig, iat) &
+              & * dot_product(this%ddCosmo%basis(:, ig), this%s(:, iat))
+          ! Save surface area in Ångström²
+          area(ii) = this%ddCosmo%w(ig) * Bohr__AA**2 * this%vdwRad(iat)**2
+        end if
+      end do
+    end do
+
+    ! Dielectric energy is the energy on the dielectric continuum
+    dielEnergy = this%keps * dot_product(zeta, phi)
+
+    write(unit, '(a)') &
+        & "$info", &
+        & "prog.: dftb+"
+
+    write(unit, '(a)') &
+        & "$cosmo"
+    write(unit, '(2x, a:, "=", g0)') &
+        & "epsilon", this%dielectricConst
+
+    write(unit, '(a)') &
+        & "$cosmo_data"
+    write(unit, '(2x, a:, "=", g0)') &
+        & "fepsi", this%keps, &
+        & "area", sum(area)
+
+    write(unit, '(a)') &
+        & "$coord_rad", &
+        & "#atom   x                  y                  z             element  radius [A]"
+    do iat = 1, size(coords0, 2)
+      write(unit, '(i4, 3(1x, f18.14), 2x, a4, 1x, f9.5)') &
+          & iat, coords0(:, iat), trim(tolower(speciesNames(species0(iat)))), &
+          & this%vdwRad(iat)*Bohr__AA
+    end do
+
+    write(unit, '(a)') &
+        & "$coord_car", &
+        & "!BIOSYM archive 3", &
+        & "PBC=OFF", &
+        & "coordinates from COSMO calculation", &
+        & "!DATE"
+    do iat = 1, size(coords0, 2)
+      write(unit, '(a, i0, t5, 3(1x, f14.9), 1x, "COSM 1", 2(6x, a2), 1x, f6.3)') &
+          & trim(speciesNames(species0(iat))), iat, coords0(:, iat)*Bohr__AA, &
+          & tolower(speciesNames(species0(iat))), speciesNames(species0(iat)), 0.0_dp
+    end do
+    write(unit, '(a)') &
+        & "end", "end"
+
+    write(unit, '(a)') &
+        & "$screening_charge"
+    write(unit, '(2x, a:, "=", g0)') &
+        & "cosmo", sum(zeta), &
+        & "correction", 0.0_dp, &
+        & "total", sum(zeta)
+
+    write(unit, '(a)') &
+        & "$cosmo_energy"
+    write(unit, '(2x, a:, "=", f21.10)') &
+        & "Total energy [a.u.]            ", energy, &
+        & "Total energy + OC corr. [a.u.] ", energy, &
+        & "Total energy corrected [a.u.]  ", energy, &
+        & "Dielectric energy [a.u.]       ", dielEnergy, &
+        & "Diel. energy + OC corr. [a.u.] ", dielEnergy
+
+    write(unit, '(a)') &
+        & "$segment_information", &
+        & "# n             - segment number", &
+        & "# atom          - atom associated with segment n", &
+        & "# position      - segment coordinates [a.u.]", &
+        & "# charge        - segment charge (corrected)", &
+        & "# area          - segment area [A**2]", &
+        & "# potential     - solute potential on segment (A length scale)", &
+        & "#", &
+        & "#  n   atom              position (X, Y, Z)                   charge         area        charge/area     potential", &
+        & "#", &
+        & "#"
+
+    ii = 0
+    do iat = 1, this%ddCosmo%nat
+      do ig = 1, this%ddCosmo%ngrid
+        if (this%ddCosmo%ui(ig, iat) > 0.0_dp) then
+          ii = ii + 1
+          write(unit, '(2i5, 7(1x, f14.9))') &
+              & ii, iat, this%ddCosmo%ccav(:, ii), &
+              & zeta(ii), area(ii), zeta(ii)/area(ii), phi(ii)/Bohr__AA
+        end if
+      end do
+    end do
+  end subroutine writeCosmoFile
 
 
 end module dftbp_cosmo

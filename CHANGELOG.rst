@@ -11,9 +11,20 @@ Unreleased
 Added
 -----
 
+- Conductor like screening model (COSMO)
+  implicit solvation model for SCC calculations
+
+- Printout of cavity information as a cosmo file
+
+- Extended syntax for selecting atoms in HSD input
+
+- Static coupled perturbed response for homogeneous electric fields (evaluating
+  molecular electric polarisability)
 
 Changed
 -------
+
+- DFT-D4 can now be evaluated self-consistently within the SCC procedure
 
 
 Fixed
