@@ -220,6 +220,7 @@ contains
 
     end if
 
+
     if (tReadAnalysis) then
       ! Analysis of properties
       call getChildValue(root, "Analysis", dummy, "", child=analysisNode, list=.true., &
@@ -1474,7 +1475,6 @@ contains
   #:else
     call readSolver(node, ctrl, geo, poisson)
   #:endif
-
 
     ! Charge
     call getChildValue(node, "Charge", ctrl%nrChrg, 0.0_dp)
