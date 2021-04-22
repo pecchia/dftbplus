@@ -504,8 +504,12 @@ contains
         if (minEdge < 0.0_dp) then
           call detailedError(field, "Minimal edge length must be positive")
         end if
-        origin = minval(geo%coords, dim=2)
-        tmpvec = maxval(geo%coords, dim=2) - origin
+        this%opt%origin(1) = minval(this%input%geo%coords(1,:))
+        this%opt%origin(2) = minval(this%input%geo%coords(2,:))
+        this%opt%origin(3) = minval(this%input%geo%coords(3,:))
+        tmpvec(1) = maxval(this%input%geo%coords(1,:)) - this%opt%origin(1)
+        tmpvec(2) = maxval(this%input%geo%coords(2,:)) - this%opt%origin(2)
+        tmpvec(3) = maxval(this%input%geo%coords(3,:)) - this%opt%origin(3)
         do ii = 1, 3
           if (tmpvec(ii) < minEdge) then
             origin(ii) = origin(ii) - 0.5_dp * (minEdge - tmpvec(ii))

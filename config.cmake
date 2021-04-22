@@ -2,7 +2,7 @@
 # Global architecture independent build settings
 #
 
-#set(CMAKE_BUILD_TYPE "Debug" CACHE STRING "Build type (Release|RelWithDebInfo|Debug|MinSizeRel)")
+set(CMAKE_BUILD_TYPE "RelWithDebInfo" CACHE STRING "Build type (Release|RelWithDebInfo|Debug|MinSizeRel)")
 # CMAKE_BUILD_TYPE is commented out in order to allow for multi-configuration builds. It will
 # automatically default to RelWithDebInfo if used in a single configuration build. Uncomment or
 # override it only if you want a non-default single configuration build.
@@ -18,7 +18,7 @@ option(WITH_ELSI "Whether DFTB+ with MPI-parallelism should use the ELSI librari
 
 option(WITH_GPU "Whether DFTB+ should support GPU-acceleration via the MAGMA-library" FALSE)
 
-option(WITH_TRANSPORT "Whether transport via libNEGF should be included." FALSE)
+option(WITH_TRANSPORT "Whether transport via libNEGF should be included." TRUE)
 # Works only when building static libraries (see option BUILD_SHARED_LIBS)
 
 option(WITH_SOCKETS "Whether socket communication should be allowed for" FALSE)
@@ -34,7 +34,7 @@ option(WITH_MBD "Whether DFTB+ should be built with many-body-dispersion support
 
 option(WITH_PLUMED "Whether metadynamics via the PLUMED2 library should be allowed for" FALSE)
 
-option(WITH_API "Whether public API should be included and the DFTB+ library installed" TRUE)
+option(WITH_API "Whether public API should be included and the DFTB+ library installed" FALSE)
 # Turn this on, if you want to use the DFTB+ library to integrate DFTB+ into other software
 # packages. (Otherwise only a stripped down version of the library without the public API is built.)
 # This will also install necessary include and module files and further libraries needed to link the
@@ -50,6 +50,10 @@ option(BUILD_SHARED_LIBS "Whether the libraries built should be shared" FALSE)
 # software packages (see WITH_API option above), they may also require a shared library (e.g.
 # calling DFTB+ functions from Python or Julia).
 
+set(CMAKE_Fortran_COMPILER "nvfortran" CACHE STRING "Fortran compiler")
+
+set(CMAKE_C_COMPILER "nvc" CACHE STRING "C compiler")
+  
 
 #
 # Test environment settings
