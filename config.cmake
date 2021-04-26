@@ -34,7 +34,7 @@ option(WITH_MBD "Whether DFTB+ should be built with many-body-dispersion support
 
 option(WITH_PLUMED "Whether metadynamics via the PLUMED2 library should be allowed for" FALSE)
 
-option(WITH_API "Whether public API should be included and the DFTB+ library installed" TRUE)
+option(WITH_API "Whether public API should be included and the DFTB+ library installed" FALSE)
 # Turn this on, if you want to use the DFTB+ library to integrate DFTB+ into other software
 # packages. (Otherwise only a stripped down version of the library without the public API is built.)
 # This will also install necessary include and module files and further libraries needed to link the
@@ -56,7 +56,7 @@ option(BUILD_SHARED_LIBS "Whether the libraries built should be shared" FALSE)
 #
 set(TEST_MPI_PROCS "1" CACHE STRING "Nr. of MPI processes used for testing")
 
-set(TEST_OMP_THREADS "1" CACHE STRING "Nr. of OpenMP-threads used for testing")
+set(TEST_OMP_THREADS "4" CACHE STRING "Nr. of OpenMP-threads used for testing")
 
 # Command line used to launch the test code.
 # The escaped variables (\${VARIABLE}) will be substituted by the corresponding CMake variables.
