@@ -26,7 +26,9 @@
 #
 # Fortran compiler settings
 #
-set(Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -Mallocatable=03 -Mbackslash"
+set(GPU_FLAGS "-acc -gpu=cc80 -Mcuda -Mcudalib=cublas -lcusolver" CACHE STRING "GPU Flags")
+
+set(Fortran_FLAGS "${CMAKE_Fortran_FLAGS} ${GPU_FLAGS} -Mallocatable=03 -Mbackslash"
   CACHE STRING "Build type independent Fortran compiler flags")
 
 set(Fortran_FLAGS_RELEASE "-O2"
