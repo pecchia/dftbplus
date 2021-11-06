@@ -1662,7 +1662,7 @@ contains
 
 
   !> Returns a list of children with the specified name.
-  subroutine getChildren(node, name, children)
+  subroutine getChildren(node, name, children, requested)
 
     !> Parent node to investigate
     type(fnode), pointer :: node
@@ -1672,15 +1672,29 @@ contains
 
     !> List of the children.
     type(fnodeList), pointer :: children
+    
+    !> If true and child not found, error is issued
+    logical, intent(in), optional :: requested
 
     type(fnode), pointer :: child
+    logical :: tRequested
     integer :: ii
 
+    if (present(requested)) then
+      tRequested = requested
+    else
+      tRequested = .true.
+    end if
+
     children => getChildrenByName(node, tolower(name))
-    do ii = 1, getLength(children)
-      call getItem1(children, ii, child)
-      call setAttribute(child, attrProcessed, "")
-    end do
+    if (associated(children)) then
+      do ii = 1, getLength(children)
+        call getItem1(children, ii, child)
+        call setAttribute(child, attrProcessed, "")
+      end do
+    elseif (tRequested) then
+      call detailedError(node, MSG_MISSING_FIELD // name)
+    end if
 
   end subroutine getChildren
 
