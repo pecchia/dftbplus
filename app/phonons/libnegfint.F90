@@ -77,7 +77,7 @@ module phonons_libnegfint
   !public :: negf_init_csr
 
   type(z_CSR), target :: csrHam
-  type(Z_CSR), pointer :: pCsrHam => null()
+  type(z_CSR), pointer :: pCsrHam => null()
 
   !type(z_CSR),target :: csrOver ! need to be removed
   !type(Z_CSR), pointer :: pCsrOver => null()
@@ -428,14 +428,14 @@ module phonons_libnegfint
   !------------------------------------------------------------------------------
   ! INTERFACE subroutine to call phonon current computation
   !------------------------------------------------------------------------------    
-  subroutine calc_phonon_current(env, DynMat, tunnMat, ldosMat, &
+  subroutine calc_phonon_current(env, pCsrHam, tunnMat, ldosMat, &
                         & currLead, conductance, twriteTunn, twriteLDOS)  
 
     !> Environment settings
     type(TEnvironment), intent(in) :: env
 
-    !> The dynamical matrix of the system
-    real(dp), intent(in) :: DynMat(:,:)
+    !> Pointer to csr dynamical matrix
+    type(z_CSR), pointer :: pCsrHam
 
     !> matrix of tunnelling amplitudes at each energy from contacts
     real(dp), allocatable, intent(inout) :: tunnMat(:,:)
@@ -462,8 +462,8 @@ module phonons_libnegfint
     real(dp), pointer    :: currPVec(:)=>null()    
     integer :: ii, jj, iK, nK, err, nnz, ntemp, fu
     real(dp), allocatable :: kPoints(:,:), kWeights(:)
-    type(z_DNS) :: zDynMat
     real(dp) :: cutoff,TT1,emin,emax,estep, kappa
+    type(z_DNS) :: zDynMat
     type(units) :: HessianUnits, HeatCurrUnits, HeatCondUnits
     type(lnParams) :: params
     character(15) :: filename
@@ -478,22 +478,11 @@ module phonons_libnegfint
     HessianUnits%name = "H"
     HeatCurrUnits%name = "W"
     HeatCondUnits%name = "W/K"
-    pCsrHam => csrHam
     
     call get_params(negf, params)
 
     do iK = 1, nK
 
-      call create(zDynMat, size(DynMat,1), size(DynMat,2) )
-      zDynMat%val = DynMat
-
-      nnz = nzdrop(zDynMat,cutoff)
-      call create(csrHam, zDynMat%nrow, zDynMat%ncol, nnz)
-
-      call dns2csr(zDynMat, csrHam)
-   
-      call destroy(zDynMat)
-      
       call negf_phonon_current(pCsrHam, iK, kWeights(iK), &
             tunnPMat, ldosPMat, currPVec)
 

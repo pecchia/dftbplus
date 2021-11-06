@@ -15,6 +15,7 @@ module phonons_initphonons
   use dftbp_common_globalenv
   use dftbp_common_unitconversion
   use dftbp_dftb_periodic
+  use dftbp_extlibs_negf, only : z_CSR, create, destroy
   use dftbp_io_charmanip
   use dftbp_io_fileid
   use dftbp_io_hsdparser, only : parseHSD, dumpHSD
@@ -30,7 +31,8 @@ module phonons_initphonons
   use dftbp_type_typegeometryhsd
   use dftbp_type_wrappedintr
   use xmlf90_flib_dom
-  implicit none
+  use phonons_mesh
+  implicit none 
   private
 
   character(len=*), parameter :: rootTag = "phonons"
@@ -47,7 +49,7 @@ module phonons_initphonons
     type(TWrappedInt1), allocatable :: iAtInRegion(:)
     character(lc), allocatable :: regionLabels(:)
   end type TPdos
-
+  
   !> Identity of the run
   integer, public :: identity
 
@@ -66,15 +68,27 @@ module phonons_initphonons
   !> verbose flag
   logical, public :: tVerbose
 
-  !> Core Variables
+  !> expose z_CSR type used here
+  public :: z_CSR
+  !> Core Variables 
   real(dp), allocatable, public :: atomicMasses(:)
+  real(dp), allocatable, public :: atomicMassesPert(:)
   real(dp), allocatable, public :: dynMatrix(:,:)
+  type(z_CSR), public, target :: dynMatCsr
+  real(dp), allocatable, public :: dynMatrixPert(:,:)
+  type(z_CSR), public, target :: dynMatPertCsr
   integer, allocatable, public :: iMovedAtoms(:)
+  integer, allocatable, public :: centralCellAtom(:)
   integer, public :: nMovedAtom, nAtomUnitCell
+  !> Maps of primitive <-> supercell atom indices
+  type(TWrappedInt1), allocatable, public :: p2s_map(:)    
+  integer, allocatable, public :: s2p_map(:)
 
   !> Kpoints information
   real(dp), allocatable, public :: kPoint(:,:), kWeight(:)
   integer, public :: nKPoints
+  type(TMesh), public :: kmesh
+
 
   !> maps atom index in central cell
   integer, allocatable, public  :: Img2CentCell(:)
@@ -109,17 +123,29 @@ module phonons_initphonons
   !> Whether modes should be animated
   logical, public :: tAnimateModes
 
-  !>
+  !> creates output for xmakemol
   logical, public :: tXmakeMol
 
-  !>
+  !> whether transport calculations should be done 
   logical, public :: tTransport
 
   !> whether phonon dispersions should be computed
   logical, public :: tPhonDispersion
 
+  !> whether phonon dispersions should be computed
+  logical, public :: tDensityOfStates
+
+  !> whether phonon dispersions should be computed
+  logical, public :: tKMesh
+
+  !> compute phonon relaxation times with T-matrix
+  logical, public :: tRelaxationTimes
+
   !> number of repeated cells along lattice vectors
   integer, public :: nCells(3)
+
+  !> volume or Area (2D) of the supercell geometry
+  real(dp), public :: cellVolume
 
   !> whether phonon dispersions should be computed
   character(4), public :: outputUnits
@@ -145,6 +171,8 @@ module phonons_initphonons
   !> Version of the oldest parser, for which compatibility is maintained
   integer, parameter :: minVersion = 4
 
+  !> Delta broadening for Green's functions
+  real(dp), public :: delta
 
   !> Container type for parser related flags.
   type TParserFlags
@@ -196,17 +224,21 @@ contains
 
     ! locals
     type(fnode), pointer :: hsdTree, root, node, tmp
-    type(fnode), pointer :: child, value
+    type(fnode), pointer :: child, child2, value
+    type(fnodeList), pointer :: children
     type(string) :: buffer, buffer2, modif
     integer :: inputVersion
-    integer :: ii, iSp1, iAt
+    integer :: ii, jj, iSp1, iAt
     logical :: tHSD, reqMass, tBadKPoints
     real(dp), allocatable :: speciesMass(:)
+    integer, allocatable :: tmpI1(:)
+    real(dp) :: drop, rTmp
     integer :: nDerivs, nGroups
     type(TParserflags) :: parserFlags
     type(TListIntR1) :: li1
 
     integer :: cubicType, quarticType
+    integer :: idxCell(2), nn
 
     write(stdOut, "(/, A)") "Starting initialization..."
     write(stdOut, "(A80)") repeat("-", 80)
@@ -282,6 +314,34 @@ contains
       call asVector(li1, nCells)
       call destruct(li1)
       nAtomUnitCell = geo%nAtom/(nCells(1)*nCells(2)*nCells(3))
+      write(stdOut, *) 'Number of atoms in Unit Cell:', nAtomUnitCell
+      call getChild(node, "centralCellAtoms", tmp, requested=.true.)
+      if (associated(tmp)) then
+        idxCell(1)=1; idxCell(2)=geo%nAtom
+        call readFirstLayerAtoms(tmp, centralCellAtom, nn, idxCell, .true.)
+        if (size(centralCellAtom) /= nAtomUnitCell) then
+           call detailedError(node,"centralCellAtoms inconsistent with supercell definition")
+        end if
+        call getMaps(centralCellAtom, nCells, p2s_map, s2p_map)
+      end if
+      tAnimateModes = .false.
+      tXmakeMol = .false.
+      call getChild(node, "DisplayModes",child=child,requested=.false.)
+      if (associated(child)) then
+        tPlotModes = .true.
+        call getChildValue(child, "PlotModes", buffer2, "1:-1", child=child, &
+            &multiple=.true.)
+        call getSelectedIndices(child, char(buffer2), [1, 3 * nMovedAtom], modesToPlot)
+        nModesToPlot = size(modesToPlot)
+        ! checks that modesToPlot is consitent with unit cell
+        if (nModesToPlot > 3*nAtomUnitCell .or. any(modesToPlot .gt. 3*nAtomUnitCell)) then
+          write(stdOut,*) 'Maximum expected number of modes:',3*nAtomUnitCell    
+          call detailedError(node,"PlotModes inconsistent with atoms in unit cell")
+        end if
+      else
+        nModesToPlot = 0
+        tPlotModes = .false.
+      end if
       call getChildValue(node, "outputUnits", buffer, "H")
       select case(trim(char(buffer)))
       case("H", "eV" , "meV", "THz", "cm")
@@ -289,10 +349,13 @@ contains
       case default
         call detailedError(node,"Unknown outputUnits "//trim(char(buffer)))
       end select
-      call readKPoints(node, geo, tBadKpoints)
+      call readKPoints(node, geo, tKMesh, tBadKpoints)
+      print*,'Phonon bandstructure'
+      print*,'Plot Modes:',nModesToPlot
     else
       tPhonDispersion = .false.
     end if
+    
 
     ! Read the atomic masses from SlaterKosterFiles or Masses
     allocate(speciesMass(geo%nSpecies))
@@ -318,22 +381,76 @@ contains
     ! cutoff used to cut out interactions
     call getChildValue(node, "Cutoff", cutoff, 9.45_dp, modifier=modif, child=value)
     call convertByMul(char(modif), lengthUnits, value, cutoff)
+    ! Sets directly a drop off in the Hessian/DynMat matrix elements
+    call getChildValue(node, "Drop", drop, 1.d-30, modifier=modif, child=value) 
 
     ! Reading the actual Hessian matrix
     call getChildValue(node, "Matrix", value, child=child)
     call getNodeName(value, buffer)
     select case(trim(char(buffer)))
     case ("dftb")
-      call readDftbHessian(value)
-    case ("dynmatrix")
-      call readDynMatrix(value)
+      call readDftbHessian(value, atomicMasses, DynMatrix)
     case ("cp2k")
-      call readCp2kHessian(value)
+      call readCp2kHessian(value, atomicMasses, DynMatrix)
+    case ("vasp")
+      call readVaspHessian(value, atomicMasses, DynMatrix)
+    case ("dynmatrix")
+      call readDynMatrix(value, DynMatrix)
+    case ("lammps")
+      call readLammpsMatrix(value, DynMatrix)
     case default
       call detailedError(node,"Unknown Hessian type "//char(buffer))
     end select
 
-    ! --------------------------------------------------------------------------------------
+    ! CSR transformation for interfacing with libNEGF
+    if (tTransport) then
+      call dns2csr(dynMatrix, dynMatCsr, drop)
+      deallocate(dynMatrix)
+    end if
+
+    call getChildValue(node, "DensityOfStates", tDensityOfStates, .false.) 
+
+    call getChildValue(node, "PhononLifetimes", tRelaxationTimes, .false.)
+    if (tRelaxationTimes .and. .not. tPhonDispersion .and. .not. tPlotModes) then
+      call detailedError(node,"Phonon lifetimes possible only with PhononDispersion {} &
+            & and DisplayModes{}")  
+    end if
+
+    if (tRelaxationTimes) then
+      atomicMassesPert = atomicMasses
+      call getChildren(node, "PerturbedMasses", children, .false.)
+      do ii = 1, getLength(children)
+        call getItem1(children, ii, child)
+        call getChildValue(child, "Atoms", buffer, child=child2, multiple=.true.)
+        call getSelectedAtomIndices(child2, char(buffer), geo%speciesNames, geo%species, tmpI1)
+        call getChildValue(child, "Mass", rTmp)
+        do jj = 1, size(tmpI1)
+          atomicMassesPert(tmpI1(jj)) = rTmp * amu__au
+        end do
+        deallocate(tmpI1) 
+      end do
+
+      call getChildValue(node, "MatrixPerturbed", value, child=child)
+      call getNodeName(value, buffer)
+      select case(trim(char(buffer)))
+      case ("dftb")
+        call readDftbHessian(value, atomicMassesPert, DynMatrixPert)
+      case ("cp2k")
+        call readCp2kHessian(value, atomicMassesPert, DynMatrixPert)
+      case ("vasp")
+        call readVaspHessian(value, atomicMassesPert, DynMatrixPert)
+      case ("dynmatrix")
+        call readDynMatrix(value, DynMatrixPert)
+      case ("lammps")
+        call readLammpsMatrix(value, DynMatrixPert)
+      case default
+        call detailedError(node,"Unkown Hessian type "//char(buffer))
+      end select
+      call getChildValue(node, "Delta", tundos%delta, &
+          &0.0001_dp, modifier=modif, child=value)
+      call convertByMul(char(modif), energyUnits, value, tundos%delta)
+      delta = tundos%delta
+    end if       
 
     ! --------------------------------------------------------------------------------------
     ! Reading cubic forces
@@ -386,7 +503,15 @@ contains
   !!* destruct the program variables created in initProgramVariables
   subroutine destructProgramVariables()
     deallocate(atomicMasses)
-    deallocate(dynMatrix)
+    if (allocated(dynMatrix)) then
+      deallocate(dynMatrix)
+    end if  
+    if (allocated(dynMatrixPert)) then
+      deallocate(dynMatrixPert)
+    end if 
+    if (allocated(dynMatCsr%nzval)) then 
+      call destroy(dynMatCsr)
+    end if  
     if (allocated(iMovedAtoms)) then
       deallocate(iMovedAtoms)
     end if
@@ -452,9 +577,9 @@ contains
 
     if (geo%tPeriodic) then
       write(stdOut,*) 'supercell lattice vectors:'
-      write(stdOut,*) 'a1:',geo%latVecs(1,:)
-      write(stdOut,*) 'a2:',geo%latVecs(2,:)
-      write(stdOut,*) 'a3:',geo%latVecs(3,:)
+      write(stdOut,*) 'a1:',geo%latVecs(:,1)
+      write(stdOut,*) 'a2:',geo%latVecs(:,2)
+      write(stdOut,*) 'a3:',geo%latVecs(:,3)
     end if
 
   end subroutine readGeometry
@@ -775,7 +900,7 @@ contains
   end subroutine readMasses
 
   !> K-Points
-  subroutine readKPoints(node, geo, tBadIntegratingKPoints)
+  subroutine readKPoints(node, geo, tKMesh, tBadIntegratingKPoints)
 
     !> Relevant node in input tree
     type(fnode), pointer :: node
@@ -783,14 +908,17 @@ contains
     !> Geometry structure to be filled
     type(TGeometry), intent(in) :: geo
 
+    !> Whether a KMesh was defined
+    logical, intent(out) :: tKMesh
+
     !> Error check
     logical, intent(out) :: tBadIntegratingKPoints
 
     type(fnode), pointer :: value1, child
     type(string) :: buffer, modifier
-    integer :: ind, ii, jj, kk
+    integer :: ind, ii, jj, kk, n3Tmp(3)
     real(dp) :: coeffsAndShifts(3, 4)
-    real(dp) :: rTmp3(3)
+    real(dp) :: r3Tmp(3), r3Tmp2(3), v1(3), v2(3), v3(3)
     type(TListIntR1) :: li1
     type(TListRealR1) :: lr1
     integer, allocatable :: tmpI1(:)
@@ -799,14 +927,15 @@ contains
 
     ! Assume SCC can has usual default number of steps if needed
     tBadIntegratingKPoints = .false.
+    tKMesh = .false.
 
     ! K-Points
     if (geo%tPeriodic) then
       call getChildValue(node, "KPointsAndWeights", value1, child=child, &
           &modifier=modifier)
       call getNodeName(value1, buffer)
-      select case(char(buffer))
 
+      select case(char(buffer))
       case ("supercellfolding")
         tBadIntegratingKPoints = .false.
         if (len(modifier) > 0) then
@@ -828,6 +957,60 @@ contains
 
         nKPoints = size(kPoint, dim=2)
 
+      case ("kmesh")  
+        tBadIntegratingKPoints = .false.
+        tKMesh = .true.
+        if (len(modifier) > 0) then
+          call detailedError(child, "No modifier is allowed, if the &
+              &SupercellFolding scheme is used.")
+        end if
+        call getChildValue(value1, "cells", n3Tmp)
+        if (any(n3Tmp<0)) then
+           call detailedError(child, "cells must be positive integers")     
+        end if
+        where (n3Tmp == 0) 
+           r3Tmp = 0.0_dp
+           r3Tmp2 = real(n3Tmp+1, dp)
+        elsewhere
+           r3Tmp = 0.5_dp   
+           r3Tmp2 = real(n3Tmp, dp)
+        end where
+        coeffsAndShifts = 0.0_dp
+        do ii = 1, 3
+          coeffsAndShifts(ii,ii) = r3Tmp2(ii)
+        end do
+        ! Cell volume calculation: 2D or 3D lattice cases
+        v1(:)=geo%latVecs(:,1)  
+        v2(:)=geo%latVecs(:,2)  
+        v3(:)=geo%latVecs(:,3) 
+        if (any(n3Tmp==0)) then
+          if (minloc(n3Tmp,1)==1) then    
+            cellVolume = norm2(cross3(v2,v3))
+          else if (minloc(n3Tmp,1)==2) then
+            cellVolume = norm2(cross3(v1,v3))
+          else 
+            cellVolume = norm2(cross3(v1,v2))
+          end if      
+          print*,'cell Volume:',cellVolume,'Bohr^2'
+        else      
+          cellVolume = dot_product(v3,cross3(v1,v2))
+          print*,'cell Volume:',cellVolume,'Bohr^3'
+        end if 
+
+        call getSuperSampling(coeffsAndShifts(:,1:3), r3Tmp, &
+            & kPoint, kWeight, reduceByInversion=.false.)
+
+        call kmesh%initMeshFromFolding(n3Tmp, kPoint)
+
+        r3Tmp(1) = kWeight(1)
+        deallocate(kPoint)
+        deallocate(kWeight)
+        nKPoints = size(kmesh%nodeCoords,2)
+        allocate(kPoint(3,nKPoints))
+        kPoint = kmesh%nodeCoords
+        allocate(kWeight(nKPoints))
+        kWeight = r3Tmp(1)/4.0_dp
+      
       case ("klines")
         ! probably unable to integrate charge for SCC
         tBadIntegratingKPoints = .true.
@@ -864,9 +1047,9 @@ contains
           if (tmpI1(jj) == 0) then
             cycle
           end if
-          rTmp3 = (kpts(:,jj) - kpts(:,jj-1)) / real(tmpI1(jj), dp)
+          r3Tmp = (kpts(:,jj) - kpts(:,jj-1)) / real(tmpI1(jj), dp)
           do kk = 1, tmpI1(jj)
-            kPoint(:,ind) = kpts(:,jj-1) + real(kk, dp) * rTmp3
+            kPoint(:,ind) = kpts(:,jj-1) + real(kk, dp) * r3Tmp
             ind = ind + 1
           end do
         end do
@@ -963,6 +1146,7 @@ contains
   end subroutine readKPointsFile_help
 
 
+
   !>  Read DFTB hessian.
   !>
   !> The derivatives matrix must be stored as the following order:
@@ -971,8 +1155,10 @@ contains
   !>  ---------- + --------- + --------- + ---------- + ---------- +...
   !>  dx_1 dx_1    dy_1 dx_1   dz_1 dx_1   dx_2 dx_1    dy_2 dx_1
   !>
-  subroutine readDftbHessian(child)
+  subroutine readDftbHessian(child, atMass, dynMat)
     type(fnode), pointer :: child
+    real(dp), intent(in) :: atMass(:)
+    real(dp), allocatable :: dynMat(:,:)
 
     type(TListRealR1) :: realBuffer
     integer :: iCount, jCount, ii, kk, jj, ll
@@ -993,16 +1179,16 @@ contains
     end if
 
     nDerivs = 3 * nMovedAtom
-    allocate(dynMatrix(nDerivs,nDerivs))
+    allocate(dynMat(nDerivs,nDerivs))
 
     open(newunit=fu, file=trim(char(filename)), action='read')
     do ii = 1,  nDerivs
-        read(fu,'(4f16.10)') dynMatrix(1:nDerivs,ii)
+        read(fu,'(4f16.10)') dynMat(1:nDerivs,ii)
     end do
 
     ! Note: we read the transpose matrix to avoid temporary arrays (ifort warnings).
     ! It should be symmetric or could be symmetrized here
-    dynMatrix = transpose(dynMatrix)
+    dynMat = transpose(dynMat)
     ! mass weight the Hessian matrix to get the dynamical matrix
     iCount = 0
     do ii = 1, nMovedAtom
@@ -1012,8 +1198,8 @@ contains
         do jj = 1, nMovedAtom
           do ll = 1, 3
             jCount = jCount + 1
-            dynMatrix(jCount,iCount) = dynMatrix(jCount,iCount) &
-                & / (sqrt(atomicMasses(ii)) * sqrt(atomicMasses(jj)))
+            dynMat(jCount,iCount) = dynMat(jCount,iCount) &
+                & / (sqrt(atMass(ii)) * sqrt(atMass(jj)))
           end do
         end do
       end do
@@ -1024,15 +1210,16 @@ contains
 
   end subroutine readDftbHessian
 
-  subroutine readDynMatrix(child)
+  subroutine readDynMatrix(child, dynMat)
     type(fnode), pointer :: child
+    real(dp), allocatable :: dynMat(:,:)
 
     type(TListRealR1) :: realBuffer
     integer :: iCount, jCount, ii, kk, jj, ll
     integer :: nDerivs
 
     nDerivs = 3 * nMovedAtom
-    allocate(dynMatrix(nDerivs,nDerivs))
+    allocate(dynMat(nDerivs,nDerivs))
 
     !The derivatives matrix must be stored as the following order:
 
@@ -1050,13 +1237,15 @@ contains
           & // i2c(len(realBuffer)) // " supplied, " &
           & // i2c(nDerivs) // " required.")
     end if
-    call asArray(realBuffer, dynMatrix)
+    call asArray(realBuffer, dynMat)
     call destruct(realBuffer)
 
   end subroutine readDynMatrix
 
-  subroutine readCp2kHessian(child)
+  subroutine readCp2kHessian(child, atMass, DynMat)
     type(fnode), pointer :: child
+    real(dp), intent(in) :: atMass(:)
+    real(dp), allocatable :: dynMat(:,:)
 
     type(TListRealR1) :: realBuffer
     integer :: iCount, jCount, ii, kk, jj, ll
@@ -1068,7 +1257,7 @@ contains
     logical :: texist
 
     nDerivs = 3 * nMovedAtom
-    allocate(dynMatrix(nDerivs,nDerivs))
+    allocate(dynMat(nDerivs,nDerivs))
 
     call getChildValue(child, "Filename", filename, "hessian.cp2k")
     inquire(file=trim(char(filename)), exist=texist )
@@ -1098,7 +1287,7 @@ contains
         do  jj  = 1, nDerivs
             p = 1+5*(ii-1)
             q = 5*ii
-          dynMatrix(jj,p:q) =  HessCp2k(jj + nDerivs*(ii-1),1:5)
+          dynMat(jj,p:q) =  HessCp2k(jj + nDerivs*(ii-1),1:5)
         end do
     end do
 
@@ -1111,17 +1300,113 @@ contains
         do jj = 1, nMovedAtom
           do ll = 1, 3
             jCount = jCount + 1
-            dynMatrix(jCount,iCount) = dynMatrix(jCount,iCount) &
-                & / (sqrt(atomicMasses(ii)) * sqrt(atomicMasses(jj)))
+            dynMat(jCount,iCount) = dynMat(jCount,iCount) &
+                & / (sqrt(atMass(ii)) * sqrt(atMass(jj)))
           end do
         end do
       end do
     end do
 
-
-  close(fu)
+    close(fu)
 
   end subroutine readCp2kHessian
+
+  ! LAMMPS Matrix already includes masses 
+  ! Units: 1/M d^2 E/dR^2 = 1/E d^2 E/dR^2 c^2 -> 1/T^2
+  ! 
+  ! LAMMPS stores in units of 1/fs^2 
+  ! 1/fs^2 = 5.851001385401955e-4 1/au^2
+  ! 
+  subroutine readLammpsMatrix(child, dynMat)
+    type(fnode), pointer :: child
+    real(dp), allocatable :: dynMat(:,:)
+
+    type(string) :: filename
+    logical :: texist
+    integer :: nDerivs, fu, iCount, jCount, jj
+    real(dp), parameter :: conv=5.851001385401955e-4 
+    real(dp) :: Dyn(3)
+
+    call getChildValue(child, "Filename", filename, "dynmat.dat")
+
+    inquire(file=trim(char(filename)), exist=texist )
+    if (texist) then  
+      write(stdOut, "(/, A)") "read Lammps Dynamical Matrix '"//trim(char(filename))//"'..."
+    else
+      call detailedError(child,"file "//trim(char(filename))//" does not exist")
+    end if
+    
+    open(newunit=fu, file=trim(char(filename)), action='read')
+    
+    nDerivs = 3 * nMovedAtom
+    allocate(dynMat(nDerivs,nDerivs))
+
+    ! mass weight the Hessian matrix to get the dynamical matrix
+    do iCount = 1, nDerivs
+      jCount = 1
+      do jj = 1, nMovedAtom
+        read(fu,*) Dyn
+        dynMat(jCount:jCount+2,iCount) = Dyn * conv
+        jCount = jCount + 3
+      end do
+    end do
+
+    close(fu)
+
+  end subroutine readLammpsMatrix
+
+  ! VASP Matrix in units of eV/Ang**2 
+  ! 1 Bohr = 0.529177 Ang; 1 Hartree = 27.211399 eV
+  ! 1 eV/Ang = 0.0194468869 a.u. 
+  ! 1 eV/Ang**2 = 0.01029084529351100249
+  subroutine readVaspHessian(child, atMass, dynMat)
+    type(fnode), pointer :: child
+    real(dp), intent(in) :: atMass(:)
+    real(dp), allocatable :: dynMat(:,:)
+
+    type(string) :: filename
+    logical :: texist
+    integer :: nDerivs, nAts, iAt, jAt, iCount, jCount, ii, jj, fu
+    real(dp), parameter :: conv=0.0102908452_dp 
+    real(dp) :: Dyn(3,3)
+
+    call getChildValue(child, "Filename", filename, "dynmat.dat")
+
+    inquire(file=trim(char(filename)), exist=texist )
+    if (texist) then  
+      write(stdOut, "(/, A)") "read VASP Forces '"//trim(char(filename))//"'..."
+    else
+      call detailedError(child,"file "//trim(char(filename))//" does not exist")
+    end if
+    
+    open(newunit=fu, file=trim(char(filename)), action='read')
+
+    read(fu,*) nAts, nAts
+    if (nAts .ne. nMovedAtom) then
+      call detailedError(child, "Number of moving atoms and forces do not agree")
+    end if  
+    
+    nDerivs = 3 * nMovedAtom
+    allocate(dynMat(nDerivs,nDerivs))
+
+    ! mass weight the Hessian matrix to get the dynamical matrix
+    do ii = 1, nMovedAtom
+      do jj = 1, nMovedAtom
+        read(fu,*) iAt, jAt 
+        iCount = 3*iAt-2
+        jCount = 3*jAt-2
+        read(fu,*) Dyn
+        dynMat(iCount:iCount+2,jCount:jCount+2) = Dyn * conv &
+             & / (sqrt(atMass(iAt)) * sqrt(atMass(jAt)))
+      end do
+    end do
+    close(fu)
+    ! Impose the acoustic sum rule
+    !do ii = 1, nDerivs
+    !  dynMat(ii,ii) = -sum(dynMat(ii,1:ii-1))-sum(dynMat(ii,ii+1:nMovedAtom))
+    !end do
+
+  end subroutine readVaspHessian
 
   ! Subroutine removing entries in the Dynamical Matrix.
   ! Not used because identified as a wrong way
@@ -1140,7 +1425,7 @@ contains
             do ll = 1, 3
               jCount = jCount + 1
               if (mod(iCount,3).eq.0 .or. mod(jCount,3).eq.0) then
-                  dynMatrix(jCount,iCount) = 0.0
+                  dynMatrix(jCount,iCount) = 0.0_dp
               end if
             end do
           end do
@@ -1156,7 +1441,7 @@ contains
             do ll = 1, 3
               jCount = jCount + 1
               if (mod(iCount,3).ne.0 .and. mod(jCount,3).ne.0) then
-                  dynMatrix(jCount,iCount) = 0.0
+                  dynMatrix(jCount,iCount) = 0.0_dp
               end if
             end do
           end do
@@ -1187,8 +1472,6 @@ contains
       end if
       call readTunAndDos(child, geo, tundos, transpar, maxval(transpar%contacts(:)%kbT) )
     endif
-
-    !call readKPoints(node, geo, tBadKpoints)
 
     call getChild(node, "Conductance", child, requested=.false.)
     if (associated(child)) then
@@ -1516,6 +1799,62 @@ contains
     end do
 
   end subroutine buildNeighbourList
+        
+  subroutine getMaps(centralCellAtom, nCells, p2s_map, s2p_map)
+    integer, intent(in) :: centralCellAtom(:)
+    integer, intent(in) :: nCells(3)
+    type(TWrappedInt1), allocatable, intent(out) :: p2s_map(:)
+    integer, allocatable, intent(out) :: s2p_map(:)
+  
+    integer :: ip, is, ii, jj, kk, iCentAtom, ind 
+    real(dp) :: v1(3), v2(3), v3(3), px(3)    
+
+    print*,'supercell atoms',geo%nAtom
+    print*,'primitive cell atoms',size(centralCellAtom)
+    print*,centralcellAtom(:)
+    v1(:) = geo%latVecs(:,1)/real(nCells(1),dp)  
+    v2(:) = geo%latVecs(:,2)/real(nCells(2),dp)  
+    v3(:) = geo%latVecs(:,3)/real(nCells(3),dp)
+    print*, v1
+    print*, v2
+    print*, v3
+    allocate(s2p_map(geo%nAtom))
+    allocate(p2s_map(size(centralCellAtom)))
+    do ip = 1, size(centralCellAtom)
+      allocate(p2s_map(ip)%data(nCells(1)*nCells(2)*nCells(3)))
+    end do
+    print*,'build maps'
+    do ip = 1, size(centralCellAtom)
+      iCentAtom = centralCellAtom(ip)
+      ind = 1  
+      do ii = -nCells(1), nCells(1)
+        do jj = -nCells(2), nCells(2)
+          do kk = -nCells(3), nCells(3)
+            px(:) = geo%coords(:,iCentAtom)+ii*v1(:)+jj*v2(:)+kk*v3(:)
+            ! search the atom in supercell (slow search)
+            do is = 1, geo%nAtom
+              if (all(abs(geo%coords(:,is) - px(:)) < 1e-2 )) then
+                 p2s_map(ip)%data(ind) = is
+                 ind = ind + 1
+                 s2p_map(is) = ip
+                 exit
+              end if   
+            end do
+
+          end do
+        end do  
+      end do
+    end do
+   ! print*, 'primitive -> supercell'
+   ! do ip = 1, size(centralCellAtom)
+   !    print*,ip,':',p2s_map(ip)%data
+   ! end do
+   ! print*, 'supercell -> primitive'
+   ! do is = 1, geo%nAtom
+   !   print*, is, s2p_map(is)
+   ! end do
+
+  end subroutine getMaps
 
   subroutine cutDynMatrix()
 
@@ -1636,6 +1975,64 @@ contains
     end do
   end subroutine checkAlongZ
 
+  subroutine dns2csr(M, Sp, drop)
+    real(dp), intent(inout) :: M(:,:)
+    type(z_CSR), intent(out) :: Sp
+    real(dp), intent(in) :: drop
 
+    integer :: nnz, ierr, ii, jj, nrow, ncol
+
+    nrow = size(M,1); ncol = size(M,2)
+
+    nnz = 0
+    do jj = 1, ncol
+      do ii = 1, nrow
+        if (abs(M(ii,jj)) < drop) then
+           M(ii,jj) = 0.0_dp
+        else    
+           nnz = nnz + 1
+        end if   
+      end do
+    end do
+    
+    call create(Sp, nrow, ncol, nnz)
+
+    call rzdnscsr(M, nnz, Sp%nzval, Sp%colind, Sp%rowpnt, ierr)
+   
+    if (ierr /= 0) then
+      STOP 'error in dnscsr conversion' 
+    end if
+
+  end subroutine dns2csr 
+      
+  subroutine rzdnscsr(dns, nzmax, a, ja, ia, ierr)
+    real(dp), intent(in) :: dns(:,:)
+    integer, intent(in) :: nzmax
+    complex(dp), intent(out) :: a(:)
+    integer, intent(out) :: ia(:), ja(:)
+    integer, intent(out) :: ierr
+
+    integer :: nrow, ncol, next, ii, jj
+    ierr = 0
+
+    nrow = size(dns,1)
+    ncol = size(dns,2)
+    next = 1
+    ia(1) = 1
+    do ii=1,nrow
+       do jj=1, ncol 
+          if (abs(dns(ii,jj)) .eq. 0.0_dp) cycle 
+          if (next .gt. nzmax) then
+             ierr = ii
+             return
+          endif
+          ja(next) = jj
+          a(next) = dns(ii,jj)
+          next = next+1
+       end do    
+       ia(ii+1) = next
+    end do
+
+  end subroutine rzdnscsr    
 
 end module phonons_initphonons

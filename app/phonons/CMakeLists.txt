@@ -1,6 +1,7 @@
 set(projectdir ${PROJECT_SOURCE_DIR})
 
 set(sources-fpp
+  mesh.F90	
   libnegfint.F90
   initphonons.F90
   phonons.F90)
