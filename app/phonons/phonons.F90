@@ -461,21 +461,18 @@ contains
 
     integer :: nW, ii, fu 
     real(dp), allocatable :: dos(:)
-    real(dp) :: Wmin, Wmax, Wq, dW, latVecs(3,3), invLatt(3,3) 
+    real(dp) :: Wmin, Wmax, Wq, dW
+    real(dp) :: unitsConv
 
     ! set regular frequency grid of 0.25 THz = 3.8e-5 Hartree 
-    dW = 0.000038_dp
+    dW = 0.0000038_dp
     Wmin = minval(eigenValues)
     Wmax = maxval(eigenValues)
     nW = (Wmax-Wmin)/dW + 1
     allocate(dos(nW))
-    
-    ! Lattice vectors
-    latVecs(:,1) = geo%latVecs(:,1)/real(nCells(1),dp) 
-    latVecs(:,2) = geo%latVecs(:,2)/real(nCells(2),dp) 
-    latVecs(:,3) = geo%latVecs(:,3)/real(nCells(3),dp) 
-    call invert33(invLatt, latVecs) 
-    invLatt = invLatt * 2.0_dp * pi
+    call setConversionUnits(unitsConv)
+    print*,'Wmin=',Wmin*unitsConv
+    print*,'Wmax=',Wmax*unitsConv
     
     ! DENSITY OF STATES --------------------------------------------------
     dos = 0.0_dp
@@ -483,7 +480,7 @@ contains
     !$OMP DO
     do ii = 1, nW
       Wq = Wmin + dW * (ii-1) 
-      call elem_contributions(kmesh, invLatt, Wq, dos(ii))
+      call elem_contributions(kmesh, Wq, dos(ii))
     end do
     !$OMP END DO
     !$OMP END PARALLEL
@@ -492,7 +489,7 @@ contains
     if (tIOProc) then
       open(newunit=fu, file='DOS.dat', action='write')
       do ii = 1, nW
-        write(fu,*) Wmin+dW*(ii-1), dos(ii)
+        write(fu,*) (Wmin+dW*(ii-1))*unitsConv, dos(ii)
       end do
       close(fu)
     end if
@@ -516,7 +513,8 @@ contains
 
     integer :: nW, iQ, iElem, iMode, fu 
     real(dp), allocatable :: tau(:,:)
-    real(dp) :: Wq, latVecs(3,3), invLatt(3,3), mytau 
+    real(dp) :: Wq, mytau
+    !real(dp) :: latVecs(3,3), invLatt(3,3) 
     complex(dp), allocatable :: V(:,:), Ve(:)
     complex(dp), allocatable :: TM(:,:,:)
     real(dp) :: unitsConv
@@ -533,11 +531,11 @@ contains
     call setConversionUnits(unitsConv)
 
     ! Get reciprocal lattice vectors 
-    latVecs(:,1) = geo%latVecs(:,1)/real(nCells(1),dp) 
-    latVecs(:,2) = geo%latVecs(:,2)/real(nCells(2),dp) 
-    latVecs(:,3) = geo%latVecs(:,3)/real(nCells(3),dp) 
-    call invert33(invLatt, latVecs) 
-    invLatt = invLatt * 2.0_dp * pi
+    !latVecs(:,1) = geo%latVecs(:,1)/real(nCells(1),dp) 
+    !latVecs(:,2) = geo%latVecs(:,2)/real(nCells(2),dp) 
+    !latVecs(:,3) = geo%latVecs(:,3)/real(nCells(3),dp) 
+    !call invert33(invLatt, latVecs) 
+    !invLatt = invLatt * 2.0_dp * pi
 
     ! Perturbation matrix 
     allocate(V(3*nMovedAtom, 3*nMovedAtom))
@@ -565,7 +563,7 @@ contains
         Wq = eigenValues(iMode,iQ)
 
         ! calculation of element contributions-------------
-        call elem_contributions(kmesh, invLatt, Wq, mytau, Ve)
+        call elem_contributions(kmesh, Wq, mytau, Ve)
 
         tau(iMode,iQ) = mytau/(2.0_dp*Wq**2) 
       end do
@@ -597,15 +595,14 @@ contains
   ! ---------------------------------------------------------------------- 
   ! Contribution of DOS or |<k|V|k'>|^2 over a triangualar mesh
   ! A linear interpolation is used  
-  subroutine elem_contributions(kmesh, invLatt, Wq, scalar, Ve)
+  subroutine elem_contributions(kmesh, Wq, scalar, Ve)
     type(TMesh), intent(in) :: kmesh
-    real(dp), intent(in) :: invLatt(3,3)
     real(dp), intent(in) :: Wq
     real(dp), intent(inout) :: scalar
     complex(dp), intent(in), optional :: Ve(:) 
 
-    integer :: jj, iM, iElem, iNode, iK, nElem
-    real(dp) :: Wk(3), q1t(3), q2t(3), q1(3), q2(3), kk(3,3), P(3), P1, P2
+    integer :: jj, iM, iElem, iNode, iK, nElem, P(3)
+    real(dp) :: Wk(3), F(3), F1, F2, vol, DD
     complex(dp) :: matel
 
     nElem = size(kmesh%elem)
@@ -613,63 +610,41 @@ contains
     !ModesToPlot, nModesToPlot, eigenValues, eigenModes   are global
     ! calculation of element contributions-------------
     scalar = 0.0_dp
+    F = 1.0_dp
 
     do iM = 1, nModesToPlot
       do iElem = 1, nElem 
         do iNode = 1, 3 
           iK = kmesh%elem(iElem)%node(iNode)%id
-          kk(:,iNode) = kmesh%nodeCoords(:,iK)
+          vol = kmesh%elem(iElem)%volume
           Wk(iNode) = eigenValues(iM, iK)
           if (present(Ve)) then
-             ! Loop over <iK,l'| -> P = |<iK,l'|V|iQ,l>|^2
-             matel = dot_product(eigenModes(:, iM, iK), Ve(:))
-             P(iNode) = abs(matel)**2
-          end if      
+            ! Loop over <iK,l'| -> P = |<iK,l'|V|iQ,l>|^2
+            matel = dot_product(eigenModes(:, iM, iK), Ve(:))
+            F(iNode) = abs(matel)**2
+          end if
         end do
         ! reorder the node labels such that Wk(1) < Wk(2) < Wk(3)
-        if (present(Ve)) then
-          call sortWk(Wk, kk, P)
-        else 
-          call sortWk(Wk, kk)
-        end if
+        call sortWk(Wk, P)
 
         ! Checks the 2 cases:
-        !  CASE 1    CASE 2            CASE 2
-        !  2---3     2---3             2---1 
-        !  |--/      | \/    -Swap->   | \/  
-        !  | /       | /               | / 
-        !  1         1                 3     
+        !  CASE 1    CASE 2  
+        !  2---3     2---3   
+        !  |--/      | \/     
+        !  | /       | /     
+        !  1         1           
         if (Wk(1) < Wq .and. Wq < Wk(2)) then
-          ! nothing to do 
+          DD = (Wq-Wk(1))/((Wk(2)-Wk(1))*(Wk(3)-Wk(1)))   
+          F1 = (F(P(2))*(Wq-Wk(1)) + F(P(1))*(Wk(2)-Wq))/(Wk(2)-Wk(1))   
+          F2 = (F(P(3))*(Wq-Wk(1)) + F(P(1))*(Wk(3)-Wq))/(Wk(3)-Wk(1))
+          scalar = scalar + pi * vol * (F1+F2) * DD
         else if (Wk(2) < Wq .and. Wq < Wk(3)) then
-          call swap(Wk(1), Wk(3))
-          call swap(kk(1,1), kk(1,3))   
-          call swap(kk(2,1), kk(2,3))   
-          call swap(kk(3,1), kk(3,3))
-          if (present(Ve)) then
-            call swap(P(1), P(3))
-          end if   
-        else
-          cycle      
+          DD = (Wk(3)-Wq)/((Wk(3)-Wk(1))*(Wk(3)-Wk(2)))   
+          F1 = (F(P(3))*(Wq-Wk(2)) + F(P(2))*(Wk(3)-Wq))/(Wk(3)-Wk(2))   
+          F2 = (F(P(3))*(Wq-Wk(1)) + F(P(1))*(Wk(3)-Wq))/(Wk(3)-Wk(1))
+          scalar = scalar + pi * vol * (F1+F2) * DD
         end if
          
-        ! Implement linear interpolation formulae
-        q1t(:) = (kk(:,2)*(Wq-Wk(1))+kk(:,1)*(Wk(2)-Wq))/(Wk(2)-Wk(1))
-        q2t(:) = (kk(:,3)*(Wq-Wk(1))+kk(:,1)*(Wk(3)-Wq))/(Wk(3)-Wk(1)) 
-        
-        do iNode = 1, 3 
-          q1(iNode) = dot_product(invLatt(:,iNode), q1t(:))
-          q2(iNode) = dot_product(invLatt(:,iNode), q2t(:))
-        end do
-          
-        if (present(Ve)) then
-          P1 = (P(2)*(Wq-Wk(1))+P(1)*(Wk(2)-Wq))/(Wk(2)-Wk(1))   
-          P2 = (P(3)*(Wq-Wk(1))+P(1)*(Wk(3)-Wq))/(Wk(3)-Wk(1))   
-          scalar = scalar + pi * norm2(q2-q1) * (P1+P2)/2.0_dp
-        else
-          scalar = scalar + pi * norm2(q2-q1) 
-        end if   
-        
       end do
     end do
   
@@ -677,33 +652,37 @@ contains
 
   ! ---------------------------------------------------------------------- 
   ! Sort k-points and P with increasing order of Wk
-  subroutine sortWk(Wk, kk, P)
+  subroutine sortWk(Wk, P)
     real(dp), intent(inout) :: Wk(3)
-    real(dp), intent(inout) :: kk(3,3)
-    real(dp), intent(inout), optional :: P(3)
+    integer, intent(out) :: P(3)
+    
     integer :: ii, il
-    logical :: mask(3)
-    mask = .true.
+    P = [1, 2, 3]
     do ii = 1, 3
-      il = minloc(Wk,1,mask)
-      call swap(Wk(ii), Wk(il))
-      call swap(kk(1,ii), kk(1,il))
-      call swap(kk(2,ii), kk(2,il))
-      call swap(kk(3,ii), kk(3,il))
-      if (present(P)) then
-        call swap(P(ii), P(il))
-      end if  
-      mask(ii) = .false.
+      do il = ii+1, 3
+        if (Wk(ii)>Wk(il)) then
+          call swapr(Wk(ii), Wk(il))
+          call swapi(P(ii), P(il))
+        end if  
+      end do
     end do
   end subroutine sortWk
  
-  subroutine swap(a,b)
+  subroutine swapi(a,b)
+    integer :: a, b
+    integer :: tmp
+    tmp = a
+    a = b
+    b = tmp
+  end subroutine swapi
+
+  subroutine swapr(a,b)
     real(dp) :: a, b
     real(dp) :: tmp
     tmp = a
     a = b
     b = tmp
-  end subroutine swap
+  end subroutine swapr
 
   ! -------------------------------------------------------------------------------
   ! Calculation of the T-matrix
@@ -728,7 +707,7 @@ contains
 
     TM = (0.0_dp,0.0_dp)
     norm = real(nCells(1)*nCells(2)*nCells(3))*kWeight(1)*4.0_dp
-    niters = 2  
+    niters = 0  
     !$OMP PARALLEL DEFAULT(SHARED), PRIVATE(iQ,iMode,iElem,iK,iM,Wq,Wk,iter), &
     !$OMP& FIRSTPRIVATE(Ve)
     allocate(Ve(3*nMovedAtom))
@@ -737,22 +716,13 @@ contains
       !print*,iQ,'/',nKPoints 
       do iMode = 1, nModesToPlot
         TM(:,iMode,iQ) = matmul(V, eigenModes(:,iMode,iQ))
-        Wq = eigenValues(iMode,iQ)
         ! T|q,m> = V|q,m> + V g V|q,m> = [I+Vg] V|q,m> 
         ! Vq = V|q,m>
         ! T|q,m> = V|q,m> + Sum_k,m  V|k,m> 1/(wq^2 - wk^2 + i wq d) <k,m|V|q,m>
         ! Completness: Sum_k,m |k,m><k,m| = Id
+        Wq = eigenValues(iMode,iQ)
         do iter = 1, niters
-          Ve = (0.0_dp, 0.0_dp)
-          ! Sum over the sub-grid  
-          do iElem = 1, size(kmesh%elem), 4
-            iK = kmesh%elem(iElem)%node(1)%id 
-            do iM = 1, nModesToPlot
-              Wk = eigenValues(iM,iK)
-              Ve = Ve + eigenModes(:,iM,iK)/(Wq**2-Wk**2+j*delta*Wq)* & 
-                & dot_product(eigenModes(:,iM,iK), TM(:,iMode,iQ))*norm
-            end do  
-          end do
+          call elem_contributions_ve(kmesh, Wq, Ve, TM(:,iMode,iQ))
           TM(:,iMode,iQ) = TM(:,iMode,iQ) + matmul(V,Ve)
         end do  
       end do
@@ -779,6 +749,89 @@ contains
     end do
 
   end subroutine computeTMatrix
+  
+  ! ---------------------------------------------------------------------- 
+  ! Contribution of |k>g(w,k)<k|V|q> over a triangualar mesh
+  ! A linear interpolation is used  
+  subroutine elem_contributions_ve(kmesh, Wq, Vo, Ve)
+    type(TMesh), intent(in) :: kmesh
+    real(dp), intent(in) :: Wq
+    complex(dp), intent(inout) :: Vo(:)
+    complex(dp), intent(in) :: Ve(:) 
+
+    integer :: jj, iM, iElem, iNode, iK, nElem, P(3)
+    real(dp) :: Wk(3), vol, DD1, DD2
+    complex(dp), allocatable :: F(:,:)
+    complex(dp), allocatable :: F12(:), F13(:), F23(:), I(:), R(:)
+    complex(dp) :: matel
+
+    nElem = size(kmesh%elem)
+    allocate(F(size(Vo),3))
+    allocate(F12(size(Vo)))
+    allocate(F13(size(Vo)))
+    allocate(F23(size(Vo)))
+    allocate(I(size(Vo)))
+    allocate(R(size(Vo)))
+
+    !ModesToPlot, nModesToPlot, eigenValues, eigenModes   are global
+    ! calculation of element contributions-------------
+    R = (0.0_dp, 0.0_dp)
+    I = (0.0_dp, 0.0_dp)
+    Vo = (0.0_dp, 0.0_dp)
+
+    do iM = 1, nModesToPlot
+      do iElem = 1, nElem 
+        do iNode = 1, 3 
+          iK = kmesh%elem(iElem)%node(iNode)%id
+          vol = kmesh%elem(iElem)%volume
+          Wk(iNode) = eigenValues(iM, iK)
+          F(:,iNode) = dot_product(eigenModes(:, iM, iK), Ve(:))*eigenModes(:,iM,iK)
+        end do
+        ! reorder the node labels such that Wk(1) < Wk(2) < Wk(3)
+        call sortWk(Wk, P)
+
+        ! Checks the 2 cases:
+        !  CASE 1    CASE 2  
+        !  2---3     2---3   
+        !  |--/      | \/     
+        !  | /       | /     
+        !  1         1  
+        ! Real and imaginary parts are obtained as in 
+        ! Ashraff (1987) J phys C: Sol state phys 20 4823 
+        ! This has been generalized here for a complex m.e. F(k)
+        ! |K,l'><K,l'|V|Q,l>/(E - Ek + i*delta)
+        !
+        ! g^r(wq,k) = 1/(wq^2 - wk^2 + 2*i*wq*delta)
+        ! g^r(wq>0,k) = 1/(wq^2 - wk^2 + i * delta') = P 1/(wq^2 - wk^2) + i*pi*delta(wq^2-wk^2)
+        !   
+        !
+        ! 2F1 + e1 X1 = F12 + F13
+        ! 2F3 + e3 X3 = F23 + F13 
+        DD1 = (Wq-Wk(1))/((Wk(2)-Wk(1))*(Wk(3)-Wk(1)))   
+        DD2 = (Wk(3)-Wq)/((Wk(3)-Wk(1))*(Wk(3)-Wk(2)))   
+        F12(:) = (F(:,P(2))*(Wq-Wk(1)) + F(:,P(1))*(Wk(2)-Wq))/(Wk(2)-Wk(1))   
+        F13(:) = (F(:,P(3))*(Wq-Wk(1)) + F(:,P(1))*(Wk(3)-Wq))/(Wk(3)-Wk(1))
+        F23(:) = (F(:,P(3))*(Wq-Wk(2)) + F(:,P(2))*(Wk(3)-Wq))/(Wk(3)-Wk(2))   
+        if (Wk(1) < Wq .and. Wq < Wk(2)) then
+          I(:) = I(:) + pi * vol * (F12(:)+F13(:)) * DD1
+        else if (Wk(2) < Wq .and. Wq < Wk(3)) then
+          I(:) = I(:) + pi * vol * (F13(:)+F23(:)) * DD2
+        end if
+        ! The real part contributions
+        R(:) = R(:) - (F13(:)+F23(:))*log(abs(Wq-Wk(3))/abs(Wq-Wk(2))) * vol * DD2 &
+             &      - (F13(:)+F12(:))*log(abs(Wq-Wk(2))/abs(Wq-Wk(1))) * vol * DD1 &
+             &      - 2.0_dp * (F(:,P(3))-F(:,P(1)))/(Wk(3)-Wk(1)) * vol &
+             &      - (F(:,P(3))*(Wk(2)-Wk(1))+F(:,P(2))*(Wk(3)-Wk(1))-F(:,P(1))*(Wk(3)-Wk(1))) &
+             &      * (Wq-Wk(2))/((Wk(3)-Wk(1))*(Wk(3)-Wk(2))*(Wk(2)-Wk(1))) * vol 
+       
+        Vo = Vo - cmplx(real(R)-aimag(I), real(I)+aimag(R)) 
+
+      end do
+    end do
+    deallocate(R,I,F12,F13,F23)
+    deallocate(F)
+  
+  end subroutine elem_contributions_ve
 
   ! ---------------------------------------------------------------------- 
   subroutine setConversionUnits(unitsConv)

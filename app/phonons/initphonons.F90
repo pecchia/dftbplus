@@ -132,10 +132,10 @@ module phonons_initphonons
   !> whether phonon dispersions should be computed
   logical, public :: tPhonDispersion
 
-  !> whether phonon dispersions should be computed
+  !> whether phonon density of states should be computed
   logical, public :: tDensityOfStates
 
-  !> whether phonon dispersions should be computed
+  !> whether a kmesh has been defined 
   logical, public :: tKMesh
 
   !> compute phonon relaxation times with T-matrix
@@ -239,6 +239,7 @@ contains
 
     integer :: cubicType, quarticType
     integer :: idxCell(2), nn
+    integer :: ip, is
 
     write(stdOut, "(/, A)") "Starting initialization..."
     write(stdOut, "(A80)") repeat("-", 80)
@@ -309,20 +310,38 @@ contains
     call getChild(root, "PhononDispersion", child=node, requested=.false.)
     if  (associated(node))  then
       tPhonDispersion = .true.
+      print*,'Phonon bandstructure calculation'
+      if (.not.geo%tPeriodic) then
+         call detailedError(root,"Bandstructure calculation with non-periodic structure")
+      end if
       call init(li1)
       call getChildValue(node, "supercell", 3, li1)
       call asVector(li1, nCells)
       call destruct(li1)
       nAtomUnitCell = geo%nAtom/(nCells(1)*nCells(2)*nCells(3))
       write(stdOut, *) 'Number of atoms in Unit Cell:', nAtomUnitCell
-      call getChild(node, "centralCellAtoms", tmp, requested=.true.)
-      if (associated(tmp)) then
-        idxCell(1)=1; idxCell(2)=geo%nAtom
-        call readFirstLayerAtoms(tmp, centralCellAtom, nn, idxCell, .true.)
+      call getChildValue(node, "centralCellAtoms", buffer, child=child2, multiple=.true.)
+
+      print*, char(buffer)
+
+      if (associated(child2)) then    
+        call getSelectedAtomIndices(child2, char(buffer), geo%speciesNames, geo%species, &
+              & centralCellAtom)
         if (size(centralCellAtom) /= nAtomUnitCell) then
            call detailedError(node,"centralCellAtoms inconsistent with supercell definition")
         end if
+        if (any(centralCellAtom<1) .or. any(centralCellAtom>geo%nAtom)) then
+           call detailedError(node,"centralCellAtoms outside the structure range")
+        end if
         call getMaps(centralCellAtom, nCells, p2s_map, s2p_map)
+        print*, 'primitive -> supercell'
+        do ip = 1, size(centralCellAtom)
+           print*,ip,':',p2s_map(ip)%data
+        end do
+        print*, 'supercell -> primitive'
+        do is = 1, geo%nAtom
+          print*, is, s2p_map(is)
+        end do
       end if
       tAnimateModes = .false.
       tXmakeMol = .false.
@@ -342,6 +361,7 @@ contains
         nModesToPlot = 0
         tPlotModes = .false.
       end if
+      print*,'Plot Modes:',nModesToPlot
       call getChildValue(node, "outputUnits", buffer, "H")
       select case(trim(char(buffer)))
       case("H", "eV" , "meV", "THz", "cm")
@@ -349,9 +369,8 @@ contains
       case default
         call detailedError(node,"Unknown outputUnits "//trim(char(buffer)))
       end select
+      print*,'Read k-points:'
       call readKPoints(node, geo, tKMesh, tBadKpoints)
-      print*,'Phonon bandstructure'
-      print*,'Plot Modes:',nModesToPlot
     else
       tPhonDispersion = .false.
     end if
@@ -409,10 +428,16 @@ contains
     end if
 
     call getChildValue(node, "DensityOfStates", tDensityOfStates, .false.) 
-
+    if (tDensityOfStates .and. .not.tKMesh) then
+      call detailedError(node,"DensityOfStates requires definition of a kmesh")     
+    end if
+    
     call getChildValue(node, "PhononLifetimes", tRelaxationTimes, .false.)
-    if (tRelaxationTimes .and. .not. tPhonDispersion .and. .not. tPlotModes) then
-      call detailedError(node,"Phonon lifetimes possible only with PhononDispersion {} &
+    if (tRelaxationTimes .and. .not.tKMesh) then
+      call detailedError(node,"PhononLifetimes require definition of a kmesh")     
+    end if
+    if (tRelaxationTimes .and. .not.tPhonDispersion .and. .not.tPlotModes) then
+      call detailedError(node,"Phonon lifetimes possible only with PhononDispersion{} &
             & and DisplayModes{}")  
     end if
 
@@ -1845,14 +1870,6 @@ contains
         end do  
       end do
     end do
-   ! print*, 'primitive -> supercell'
-   ! do ip = 1, size(centralCellAtom)
-   !    print*,ip,':',p2s_map(ip)%data
-   ! end do
-   ! print*, 'supercell -> primitive'
-   ! do is = 1, geo%nAtom
-   !   print*, is, s2p_map(is)
-   ! end do
 
   end subroutine getMaps
 

@@ -1672,7 +1672,7 @@ contains
 
     !> List of the children.
     type(fnodeList), pointer :: children
-    
+
     !> If true and child not found, error is issued
     logical, intent(in), optional :: requested
 
@@ -1683,7 +1683,7 @@ contains
     if (present(requested)) then
       tRequested = requested
     else
-      tRequested = .true.
+      tRequested = .false.
     end if
 
     children => getChildrenByName(node, tolower(name))
