@@ -2600,7 +2600,7 @@ contains
       end if
       if (.not.ctrl%tSpinOrbit) then
         call getSuperSampling(coeffsAndShifts(:,1:3), modulo(coeffsAndShifts(:,4), 1.0_dp),&
-            & ctrl%kPoint, ctrl%kWeight, reduceByInversion=.true.)
+            & ctrl%kPoint, ctrl%kWeight, reduceByInversion=.false.)
       else
         call getSuperSampling(coeffsAndShifts(:,1:3), modulo(coeffsAndShifts(:,4), 1.0_dp),&
             & ctrl%kPoint, ctrl%kWeight, reduceByInversion=.false.)

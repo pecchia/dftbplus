@@ -11,6 +11,7 @@ module dftbp_negf
   use libnegf, only : convertcurrent, eovh, getel, lnParams, pass_DM, Tnegf, kb, units
 #:if WITH_MPI
   use libnegf, only : negf_mpi_init, negf_cart_init
+  use libnegf, only : set_energy_comm, set_kpoint_comm, set_cart_comm
 #:endif
   use libnegf, only : z_CSR, z_DNS, READ_SGF, COMP_SGF, COMPSAVE_SGF
   use libnegf, only : DELTA_SQ, DELTA_W, DELTA_MINGO

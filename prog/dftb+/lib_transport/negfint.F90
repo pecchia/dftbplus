@@ -13,6 +13,7 @@ module dftbp_negfint
   use dftbp_negf, only : convertcurrent, eovh, getel, lnParams, pass_DM, Tnegf, units
 #:if WITH_MPI
   use dftbp_negf, only : negf_mpi_init, negf_cart_init
+  use dftbp_negf, only : set_energy_comm, set_kpoint_comm, set_cart_comm
 #:endif
   use dftbp_negf, only : z_CSR, READ_SGF, COMP_SGF, COMPSAVE_SGF
   use dftbp_negf, only : associate_lead_currents, associate_ldos, associate_transmission
@@ -121,6 +122,11 @@ contains
     ! ------------------------------------------------------------------------------
     ! Set defaults and fill up the parameter structure with them
     call init_negf(this%negf)
+#:if WITH_MPI
+    call set_energy_comm(this%negf, env%mpi%groupComm)
+    call set_kpoint_comm(this%negf, env%mpi%interGroupComm)
+    call set_cart_comm(this%negf, env%mpi%globalComm)
+#:endif
     call init_contacts(this%negf, ncont)
     call set_scratch(this%negf, ".")
 
@@ -401,13 +407,15 @@ contains
     type(TElPh), intent(in) :: elph(:)
 
     integer :: ii
-    real(dp) :: kbT
+    real(dp) :: kbT, cell_area, deltaz
 
     kbT = 0.0_dp
     do ii = 1, size(negf%cont)
       kbT = kbT + negf%cont(ii)%kbT_t  
     end do
     kbT = kbT/size(negf%cont)
+    cell_area = 1.0_dp
+    deltaz = 0.01_dp
 
     print*,'debug create elph size:', size(elph)
 
@@ -430,11 +438,13 @@ contains
       case(interaction_models%polaroptical)
         write(stdOut,*) 'Setting polar-optical inelastic scattering model'
         call set_elph_inelastic(negf, elph(ii)%coupling, elph(ii)%wq, kbT, &
-             & elph(ii)%scba_niter) 
+             & deltaz, elph(ii)%eps_r, elph(ii)%eps_inf, elph(ii)%q0, &
+             & cell_area, elph(ii)%scba_niter)
       case(interaction_models%nonpolaroptical)
         write(stdOut,*) 'Setting non polar-optical inelastic scattering model'
         call set_elph_inelastic(negf, elph(ii)%coupling, elph(ii)%wq, kbT, &
-             & elph(ii)%scba_niter) 
+             & deltaz, elph(ii)%eps_r, elph(ii)%eps_inf, elph(ii)%q0, &
+             & cell_area, elph(ii)%scba_niter)
       case default
         call error("Electron-phonon model is not supported ")
       end select
@@ -693,7 +703,7 @@ contains
     !> global array of weights 
     real(dp), intent(in) :: kweights(:)
     
-    !> index of kpoints in the array
+    !> index of kpoints in the array (maps local to global)
     integer, intent(in) :: local_kindex(:)
   
     call set_kpoints(this%negf, kpoints, kweights, local_kindex)

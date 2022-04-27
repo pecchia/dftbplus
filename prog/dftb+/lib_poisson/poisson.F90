@@ -334,8 +334,8 @@ module poisson
 
  end subroutine init_poissbox
 
-!> This subroutine is a driver for the mudpack (c) solver (see mud3.f) *
-subroutine mudpack_drv(env, SCC_in, V_L_atm, grad_V, iErr)
+ !> This subroutine is a driver for the mudpack (c) solver (see mud3.f) *
+ subroutine mudpack_drv(env, SCC_in, V_L_atm, grad_V, iErr)
 
   !> Environment settings
   type(TEnvironment), intent(inout) :: env
@@ -636,7 +636,7 @@ subroutine mudpack_drv(env, SCC_in, V_L_atm, grad_V, iErr)
     !--------------------------------------------------------------------------
     if (ncont.gt.0) then
 
-      allocate(bulk(ncont))
+       allocate(bulk(ncont))
        call create_phi_bulk(bulk,iparm,dlx,dly,dlz,cont_mem)
 
        if(InitPot.and.id0.and.niter_.eq.1.and.verbose.gt.VBT) then
@@ -736,7 +736,6 @@ subroutine mudpack_drv(env, SCC_in, V_L_atm, grad_V, iErr)
     !*********************************************************************************
     ! Charge density evaluation on the grid points
     !*********************************************************************************
-
     call set_rhs(env, iparm,fparm,dlx,dly,dlz,rhs_,bulk)
 
 

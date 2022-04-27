@@ -1808,9 +1808,9 @@ contains
     call negfInt%setup_str(denseDescr, transpar, ginfo%greendens, coords, neighbourList%iNeighbour,&
         & nNeighbourSK, img2CentCell)
 
-    call negfInt%setup_dephasing(ginfo%tundos)  !? why tundos
-
     call negfInt%setup_kpoints(kPoint, kWeight, localKS(1,:))
+    
+    call negfInt%setup_dephasing(ginfo%tundos) 
 
   end subroutine setupNegfStuff
 
