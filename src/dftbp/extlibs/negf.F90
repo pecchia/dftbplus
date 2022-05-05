@@ -19,7 +19,9 @@ module dftbp_extlibs_negf
       & init_negf, init_structure, pass_hs, set_bp_dephasing, set_drop, set_elph_block_dephasing,&
       & set_elph_dephasing, set_elph_s_dephasing, set_ldos_indexes, set_params, set_scratch,&
       & set_tun_indexes, writememinfo, writepeakinfo, dns2csr, csr2dns, nzdrop, printcsr,&
-      & compute_phonon_current, thermal_conductance, convertHeatCurrent, convertHeatConductance
+      & compute_phonon_current, thermal_conductance, convertHeatCurrent, convertHeatConductance, &
+      & interaction_models, set_elph_inelastic, set_kpoints, init_basis, compute_layer_current, &
+      & create_hs
 #:if WITH_MPI
   use libnegf, only : negf_mpi_init, negf_cart_init
 #:endif

@@ -1612,7 +1612,7 @@ contains
     end if
     call initTransport_(env, input, this%electronicSolver, this%nSpin, this%tempElec, this%tNegf,&
         & this%isAContactCalc, this%mu, this%negfInt, this%ginfo, this%transpar, this%writeTunn,&
-        & this%tWriteLDOS, this%regionLabelLDOS)
+        & this%tWriteLDOS, this%regionLabelLDOS, this%kPoint, this%kWeight, this%parallelKS%localKS)
   #:else
     this%tTunn = .false.
     this%tLocalCurrents = .false.
@@ -4455,7 +4455,7 @@ contains
 
   !> Initialise a transport calculation
   subroutine initTransport_(env, input, electronicSolver, nSpin, tempElec, tNegf, isAContactCalc,&
-      & mu, negfInt, ginfo, transpar, writeTunn, tWriteLDOS, regionLabelLDOS)
+      & mu, negfInt, ginfo, transpar, writeTunn, tWriteLDOS, regionLabelLDOS, kPoint, kWeight, localKS)
     type(TEnvironment), intent(inout) :: env
     type(TInputData), intent(in) :: input
     type(TElectronicSolver), intent(inout) :: electronicSolver
@@ -4469,6 +4469,10 @@ contains
     type(TTransPar), intent(out) :: transpar
     logical, intent(out) :: writeTunn, tWriteLDOS
     character(lc), allocatable, intent(out) :: regionLabelLDOS(:)
+    real(dp), intent(in) :: kPoint(:,:)
+    real(dp), intent(in) :: kWeight(:)
+    integer, intent(in) :: localKS(:,:)
+
 
     logical :: tAtomsOutside
     integer :: iSpin
@@ -4526,7 +4530,7 @@ contains
 
       ! Some checks and initialization of GDFTB/NEGF
       call TNegfInt_init(negfInt, input%transpar, env, input%ginfo%greendens,&
-          & input%ginfo%tundos, tempElec)
+          & input%ginfo%tundos, tempElec, kPoint, kWeight, localKS)
 
       ginfo = input%ginfo
 

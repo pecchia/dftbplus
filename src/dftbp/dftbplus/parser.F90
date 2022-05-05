@@ -81,7 +81,7 @@ module dftbp_dftbplus_parser
 #:endif
 #:if WITH_TRANSPORT
   use dftbp_transport_negfvars, only : TTransPar, TNEGFGreenDensInfo, TNEGFTunDos, TElPh,&
-      & ContactInfo
+      & ContactInfo, interaction_models
 #:endif
   implicit none
 
@@ -196,16 +196,17 @@ contains
       input%transpar%idxdevice(2) = input%geom%nAtom
     end if
 
-    call getChild(root, "Dephasing", child, requested=.false.)
-    if (associated(child)) then
-      call detailedError(child, "Be patient... Dephasing feature will be available soon!")
-      !call readDephasing(child, input%slako%orb, input%geom, input%transpar, input%ginfo%tundos)
-    end if
-
     ! electronic Hamiltonian
     call getChildValue(root, "Hamiltonian", hamNode)
     call readHamiltonian(hamNode, input%ctrl, input%geom, input%slako, input%transpar,&
         & input%ginfo%greendens, input%poisson)
+
+    ! Dephasing after Hamiltonian is ok?
+    call getChild(root, "Dephasing", child, requested=.false.)
+    if (associated(child)) then
+      !call detailedError(child, "Be patient... Dephasing feature will be available soon!")
+      call readDephasing(child, input%slako%orb, input%geom, input%transpar, input%ginfo%tundos)
+    end if
 
   #:else
 
@@ -5106,12 +5107,26 @@ contains
             & with transport yet)")
       end if
       call readTunAndDos(child, orb, geo, tundos, transpar, ctrl%tempElec)
-    else
-      if (ctrl%solver%isolver == electronicSolverTypes%OnlyTransport) then
-        call detailedError(node, "The TransportOnly solver requires a TunnelingAndDos block to be&
-            & present.")
+    end if
+    call getChild(node, "LayerCurrents", child2, requested=.false.)
+    if (associated(child2)) then
+      if (.not.transpar%defined) then
+        call error("Block LayerCurrents requires Transport block.")
       end if
-    endif
+      if (.not.transpar%taskUpload) then
+        call error("Block LayerCurrents not compatible with task=contactHamiltonian")
+      end if
+      if (.not. allocated(orb)) then
+        call error("Orbital information from SK-files missing (xTB Hamiltonian not compatible&
+            & with transport yet)")
+      end if
+      call readLayerCurrents(child2, orb, geo, tundos, transpar, ctrl%tempElec)
+    end if
+    if (.not.associated(child) .and. .not.associated(child2) .and. &
+         & ctrl%solver%isolver==electronicSolverTypes%OnlyTransport) then
+      call detailedError(node, "The TransportOnly solver requires a TunnelingAndDos block to be&
+          & present.")
+    end if
   #:endif
 
   end subroutine readAnalysis
@@ -6436,19 +6451,36 @@ contains
     type(TNEGFTunDos), intent(inout) :: tundos
 
     type(fnode), pointer :: value1, child
+    type(fnodeList), pointer :: children_el, children_inel
+    integer :: nEl, nInel, ii
 
-    call getChild(node, "VibronicElastic", child, requested=.false.)
-    if (associated(child)) then
-      tp%tDephasingVE = .true.
-      call readElPh(child, tundos%elph, geom, orb, tp)
-    end if
+    call getChildren(node, "Elastic", children_el)
+    nEl = getLength(children_el)
+    call getChildren(node, "Inelastic", children_inel)
+    nInel = getLength(children_inel)
 
-    call getChildValue(node, "BuettikerProbes", value1, "", child=child, &
-        &allowEmptyValue=.true., dummyValue=.true.)
-    if (associated(value1)) then
-      tp%tDephasingBP = .true.
-      call readDephasingBP(child, tundos%bp, geom, orb, tp)
-    end if
+    allocate(tundos%elph(nEl+nInel))
+
+    do ii = 1, nEl
+      call getItem1(children_el, ii, child)
+      if (associated(child)) then
+        call readElastic(child, tundos%elph(ii), geom, orb, tp)
+      end if
+    end do
+
+    do ii = 1, nInel
+      call getItem1(children_inel, ii, child)
+      if (associated(child)) then
+        call readInelastic(child, tundos%elph(nEl+ii), geom, orb, tp)
+      end if
+    end do
+
+    !call getChildValue(node, "BuettikerProbes", value1, "", child=child, &
+    !    &allowEmptyValue=.true., dummyValue=.true.)
+    !if (associated(value1)) then
+    !  tp%tDephasingBP = .true.
+    !  call readDephasingBP(child, tundos%bp, geom, orb, tp)
+    !end if
 
     ! Lowdin transformations involve dense matrices and works only in small systems
     ! For the dftb+ official release the options are disabled
@@ -6463,7 +6495,7 @@ contains
 
 
   !> Read Electron-Phonon blocks (for density and/or current calculation)
-  subroutine readElPh(node, elph, geom, orb, tp)
+  subroutine readElastic(node, elph, geom, orb, tp)
 
     !> Input node in the tree
     type(fnode), pointer :: node
@@ -6481,30 +6513,117 @@ contains
     type(TTransPar), intent(in) :: tp
 
 
+    type(fnode), pointer :: field, child, child2
+    type(string) :: modifier, dephtype
     logical :: block_model, semilocal_model
 
+
+    call getChildValue(node, "", field, child=child)
+    call getNodeName2(field, dephtype)
+
+    select case (char(dephtype))
+    case ("diagonal")
+      elph%model = interaction_models%dephdiagonal
+      call getChild(child, "Diagonal", child2)
+      call read_common_part(child2)
+    case ("atomblock")
+      elph%model = interaction_models%dephatomblock
+      call getChild(child, "AtomBlock", child2)
+      call read_common_part(child2)
+    case ("overlap")
+      elph%model = interaction_models%dephoverlap
+      call getChild(child, "Overlap", child2)
+      call read_common_part(child2)
+    case default
+      call detailedError(child,"unkown dephasing type: "//char(dephtype))
+    end select
+
     elph%defined = .true.
-    !! Only local el-ph model is defined (elastic for now)
-    elph%model = 1
 
-    call getChildValue(node, "MaxSCBAIterations", elph%scba_niter, default=100)
-    call getChildValue(node, "atomBlock", block_model, default=.false.)
-    if (block_model) then
-      elph%model = 2
-    endif
+    contains
+    subroutine read_common_part(node)
+      type(fnode), pointer :: node
 
-    !BUG: semilocal model crashes because of access of S before its allocation
-    !     this because initDephasing was moved into initprogram
-    call getChildValue(node, "semiLocal", semilocal_model, default=.false.)
-    if (semilocal_model) then
-      call detailedError(node, "semilocal dephasing causes crash and has been "//&
-           & "temporarily disabled")
-      elph%model = 3
-    endif
+      call getChildValue(node, "MaxSCBAIterations", elph%scba_niter, default=100)
+      call getChildValue(node, "SCBATolerance", elph%scba_tol, default=1.0d-7)
+      call readCoupling(node, elph, geom, orb, tp)
 
-    call readCoupling(node, elph, geom, orb, tp)
+    end subroutine read_common_part
 
-  end subroutine readElPh
+  end subroutine readElastic
+
+  !> Read Electron-Phonon blocks (for density and/or current calculation)
+  subroutine readInelastic(node, elph, geom, orb, tp)
+
+    !> Input node in the tree
+    type(fnode), pointer :: node
+
+    !> container for electron-phonon parameters
+    type(TElPh), intent(inout) :: elph
+
+    !> Geometry type
+    type(TGeometry), intent(in) :: geom
+
+    !> Orbitals infos
+    type(TOrbitals), intent(in) :: orb
+
+    !> Transport parameter type
+    type(TTransPar), intent(in) :: tp
+
+
+    type(fnode), pointer :: field, child, child2
+    type(string) :: modifier, phonontype
+    real(dp) :: tmp
+    elph%defined = .true.
+
+    ! READ NONPOLAR-OPTICAL, POLAR-OPTICAL
+    call getChildValue(node, "", field, child=child)
+    call getNodeName2(field, phonontype)
+
+    select case (char(phonontype))
+    case ("polaroptical")
+      elph%model = interaction_models%polaroptical
+      call getChild(child, "PolarOptical", child2)
+      call read_common_part(child2)
+      call getChildValue(child2, "EpsInfinity", elph%eps_inf, default=1.0_dp)
+      print*,'epsilon',elph%eps_inf
+      call getChildValue(child2, "Eps0", elph%eps_r, default=1.0_dp)
+      call getChildValue(child2, "ScreeningLength", tmp, 10.0_dp, modifier=modifier,&
+          & child=field)
+      call convertByMul(char(modifier), lengthUnits, field, tmp)
+      elph%q0 = 1.0_dp/tmp
+    case ("NonPolarOptical")
+      elph%model = interaction_models%nonpolaroptical
+      call getChild(child, "NonPolarOptical", child2)
+      call read_common_part(child2)
+      call getChildValue(child2, "DeformationPotential", elph%D0, 0.0_dp, modifier=modifier,&
+            & child=field)
+      call convertByMul(char(modifier), energyUnits, field, elph%D0)
+    case default
+      call detailedError(child,"unkown inelastic phonon type: "//char(phonontype))
+    end select
+
+    contains
+    subroutine read_common_part(node)
+      type(fnode), pointer :: node
+
+      type(fnode), pointer :: field
+      type(string) :: modifier
+      real(dp) :: tmp
+
+      call getChildValue(node, "MaxSCBAIterations", elph%scba_niter, default=100)
+      call getChildValue(node, "SCBATolerance", elph%scba_tol, default=1.0d-7)
+      call getChildValue(node, "PhononFrequency", tmp, 0.0_dp, modifier=modifier,&
+           & child=field)
+      call convertByMul(char(modifier), energyUnits, field, tmp)
+      elph%wq = tmp
+      call getChildValue(node, "Umklapp", elph%tUmklapp, .false.)
+      call getChildValue(node, "KSymmetry", elph%tKSymmetry, .true.)
+
+      call readCoupling(node, elph, geom, orb, tp)
+    end subroutine read_common_part
+
+  end subroutine readInelastic
 
 
   !> Read Buettiker probe dephasing blocks (for density and/or current calculation)
@@ -6548,21 +6667,20 @@ contains
       call detailedError(dephModel,"unknown model")
     end select
 
-    elph%model = 1
+    elph%model = interaction_models%dephdiagonal
 
     call getChildValue(dephModel, "MaxSCBAIterations", elph%scba_niter, default=100)
 
     call getChildValue(dephModel, "atomBlock", block_model, default=.false.)
     if (block_model) then
-      elph%model = 2
+      elph%model = interaction_models%dephatomblock
     endif
 
     !BUG: semilocal model crashes because of access of S before its allocation
     !     this because initDephasing occurs in initprogram
     call getChildValue(dephModel, "semiLocal", semilocal_model, default=.false.)
     if (semilocal_model) then
-      call detailedError(dephModel, "semilocal dephasing is not working yet")
-      elph%model = 3
+      elph%model = interaction_models%dephoverlap
     endif
 
     call readCoupling(dephModel, elph, geom, orb, tp)
@@ -6607,6 +6725,7 @@ contains
       atm_range(1) = 1
       atm_range(2) = geom%nAtom
     endif
+
     do ii=atm_range(1), atm_range(2)
       norbs = norbs + orb%nOrbAtom(ii)
     enddo
@@ -6667,13 +6786,18 @@ contains
       enddo
       deallocate(atmCoupling)
 
+    case (textNodeName)
+      call getChildValue(node, "Coupling", rTmp, child=field, modifier=modifier)
+      call convertByMul(char(modifier), energyUnits, field, rTmp)
+      elph%coupling = rTmp
+
     case ("constant")
       call getChildValue(child, "Constant", rtmp, child=field)
       call convertByMul(char(modifier), energyUnits, field, rTmp)
       elph%coupling = rTmp
 
     case default
-      call detailedError(node, "Coupling definition unknown")
+      call detailedError(node, "Coupling definition unknown: "//char(method))
     end select
 
   end subroutine readCoupling
@@ -6819,6 +6943,64 @@ contains
 
   end subroutine readTunAndDos
 
+  !> Read LayerCurrents options from analysis block
+  subroutine readLayerCurrents(root, orb, geo, tundos, transpar, tempElec)
+    type(fnode), pointer :: root
+    type(TOrbitals), intent(in) :: orb
+    type(TGeometry), intent(in) :: geo
+
+    !> tundos is the container to be filled
+    type(TNEGFTunDos), intent(inout) :: tundos
+    type(TTransPar), intent(inout) :: transpar
+    real(dp), intent(in) :: tempElec
+
+    integer :: ncont, nkT
+    real(dp) :: eRange(2), eRangeDefault(2)
+    type(string) :: modifier
+    type(fnode), pointer :: field
+
+    if (transpar%ncont > 2) then
+      call detailedError(root,"Layer currents works for 2 contacts only")  
+    end if  
+    tundos%defined = .true.
+
+    call getChildValue(root, "Delta", tundos%delta, &
+        &1.0e-5_dp, modifier=modifier, child=field)
+    call convertByMul(char(modifier), energyUnits, field, &
+        &tundos%delta)
+    call getChildValue(root, "BroadeningDelta", tundos%broadeningDelta, &
+        &0.0_dp, modifier=modifier, child=field)
+    call convertByMul(char(modifier), energyUnits, field, &
+        &tundos%broadeningDelta)
+
+    if (all(transpar%contacts(:)%potential.eq.0.0)) then
+      call detailedError(root,"Layer currents are computed for a bias")  
+    else
+      ! Default meaningful
+      ! nKT is set to GreensFunction default, i.e. 10
+      ! I avoid an explicit nKT option because I find it confusing here
+      ! (it makes sense only out of equilibrium)
+      ! Emin = min(-mu); Emax=max(-mu) where mu is Vi-min(Efi)
+      ! Note: if Efi != min(Efi) a built in potential is added in poisson
+      ! to aling the leads, we don't need to include it here
+      nKT = 10
+      eRangeDefault(1) = minval(-1.0*transpar%contacts(:)%potential) + &
+                        & minval(1.0*transpar%contacts(:)%eFermi(1)) -   &
+                        & nKT * maxval(tundos%kbT)
+      eRangeDefault(2) = maxval(-1.0*transpar%contacts(:)%potential) + &
+                        & minval(transpar%contacts(:)%eFermi(1)) +   &
+                        & nKT * maxval(tundos%kbT)
+      call getChildValue(root, "EnergyStep", tundos%estep, 6.65e-4_dp, &
+                          &modifier=modifier, child=field)
+      call convertByMul(char(modifier), energyUnits, field, tundos%estep)
+      call getChildValue(root, "EnergyRange", eRange, eRangeDefault, &
+                          modifier=modifier, child=field)
+      call convertByMul(char(modifier), energyUnits, field, eRange)
+    end if
+
+    tundos%layerCurrent = .true.
+
+  end subroutine readLayerCurrents
 
   !> Read bias information, used in Analysis and Green's function eigensolver
   subroutine readContacts(pNodeList, contacts, geom, task)

@@ -8,6 +8,7 @@
 module dftbp_transport_negfvars
   use dftbp_common_accuracy, only : dp, mc, lc
   use dftbp_type_wrappedintr, only : TWrappedInt1
+  use dftbp_extlibs_negf, only : interaction_models 
   implicit none
 
   private
@@ -17,6 +18,15 @@ module dftbp_transport_negfvars
   public :: ContactInfo
   public :: TElph
 
+  public :: interaction_models
+  !> Available interaction_models:
+  !> diagonal  (elastic dephasing with diagonal coupling)
+  !> atomblock (elastic dephasing with atomic block couplings)
+  !> overlap   (elastic dephasing with block coupling as S)
+  !> polaroptical    (inelastic polar-optical coupling model)
+  !> nonpolaroptical (inelastic nonpolar-optical coupling model)
+  !> acousticinel    (acoustic inelastic deformation potential model)
+  !> matrixcoupling  (inelastic with full matrix dH/dQ coupling form)
 
 
   !> Options for electron-phonon model
@@ -25,8 +35,8 @@ module dftbp_transport_negfvars
     !> True if filled up with info from an input block
     logical :: defined = .false.
 
-    !> Specify which model in input, 1-3 elastic models: diagonal, block diagonal and overlap masked
-    integer :: model = 0
+    !> Specify which model in input
+    integer :: model = interaction_models%dummy
 
     !> Coupling strength (?)
     real(dp), allocatable :: coupling(:)
@@ -34,8 +44,32 @@ module dftbp_transport_negfvars
     !> Iterations for self-consistent Born approximation
     integer :: scba_niter = 0
 
+    !> Iterations for self-consistent Born approximation
+    real(dp) :: scba_tol = 0.0_dp
+
     !> List of orbital per atom for models = (2,3)
     integer, allocatable :: orbsperatm(:)
+
+    !> phonon frequency
+    real(dp) :: wq = 0.0_dp
+
+    !> dielectric constant in the high freq limit
+    real(dp) :: eps_inf = 1.0_dp
+
+    !> dielectric constant in the low freq
+    real(dp) :: eps_r = 1.0_dp
+
+    !> screening paramter
+    real(dp) :: q0 = 0.0_dp
+
+    !> deformation potential
+    real(dp) :: D0 = 0.0_dp
+
+    !> whether Umklapp have to be added up
+    logical :: tUmklapp = .false.
+
+    !> whether k -> -k symmetry
+    logical :: tKSymmetry = .true.
 
   end type TElPh
 
@@ -81,6 +115,7 @@ module dftbp_transport_negfvars
     logical :: tReadSelfEnergy = .false.
     logical :: tWriteSurfaceGF = .false.
     logical :: tReadSurfaceGF = .false.
+    ! Buettiker probe dephasing
 
   end type ContactInfo
 
@@ -136,14 +171,17 @@ module dftbp_transport_negfvars
     !> write tunneling on separate files
     logical :: writeTunn = .false.
 
+    !> compute layer-to-layer currents
+    logical :: layerCurrent = .false.
+
     !> contact temperatures
     real(dp), allocatable :: kbT(:)
 
     !> Electron-phonon coupling
-    type(Telph) :: elph
+    type(Telph), allocatable :: elph(:)
 
     !> Buttiker Probe for dephasing
-    type(Telph) :: bp
+    type(Telph), allocatable :: bp
 
   end type TNEGFTunDos
 
@@ -202,10 +240,10 @@ module dftbp_transport_negfvars
     real(dp), allocatable :: kbT(:)
 
     !> Electron-phonon coupling
-    type(Telph) :: elph
+    type(Telph), allocatable :: elph(:)
 
     !> Buttiker Probe for dephasing
-    type(Telph) :: bp
+    type(Telph), allocatable :: bp
 
   end type TNEGFGreenDensInfo
 
@@ -249,6 +287,9 @@ module dftbp_transport_negfvars
     !> type of phonon modes (Longitudinal, transverse)
     integer :: typeModes
 
+    !> Buettiker probe switch
+    logical :: tDephasingBP = .false.
+
     !DAR begin - type TTransPar new items
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     logical :: tNoGeometry = .false.
@@ -263,8 +304,6 @@ module dftbp_transport_negfvars
     character(lc) :: FileName
     logical :: tManyBody =.false.
     logical :: tElastic =.true.
-    logical :: tDephasingVE = .false.
-    logical :: tDephasingBP = .false.
     logical :: tZeroCurrent = .false.
     integer :: MaxIter = 1000
     logical :: tWriteDOS = .false.
@@ -287,7 +326,7 @@ contains
     !> Duplicate
     type(TNEGFGreenDensInfo), intent(out) :: gOUT
 
-    integer :: isz
+    integer :: isz, ii
 
     ! copy greendens
     gOUT%defined = gIN%defined
@@ -317,19 +356,29 @@ contains
     end if
 
     ! copy greendens%elph
-    if (allocated(gIN%elph%coupling)) then
-      isz = size(gIN%elph%coupling)
-      allocate(gOUT%elph%coupling(isz))
-      gOUT%elph%coupling = gIN%elph%coupling
+    if (allocated(gIN%elph)) then
+      allocate(gOUT%elph(size(gIN%elph)))
+      do ii = 1, size(gIN%elph)
+        if (allocated(gIN%elph(ii)%coupling)) then
+          isz = size(gIN%elph(ii)%coupling)
+          allocate(gOUT%elph(ii)%coupling(isz))
+          gOUT%elph(ii)%coupling = gIN%elph(ii)%coupling
+        end if
+        if (allocated(gIN%elph(ii)%orbsperatm)) then
+          isz = size(gIN%elph(ii)%orbsperatm)
+          allocate(gOUT%elph(ii)%orbsperatm(isz))
+          gOUT%elph(ii)%orbsperatm = gIN%elph(ii)%orbsperatm
+        end if
+        gOUT%elph(ii)%defined = gIN%elph(ii)%defined
+        gOUT%elph(ii)%model = gIN%elph(ii)%model
+        gOUT%elph(ii)%scba_niter = gIN%elph(ii)%scba_niter
+        gOUT%elph(ii)%wq = gIN%elph(ii)%wq
+        gOUT%elph(ii)%eps_inf = gIN%elph(ii)%eps_inf
+        gOUT%elph(ii)%eps_r = gIN%elph(ii)%eps_r
+        gOUT%elph(ii)%q0 = gIN%elph(ii)%q0
+        gOUT%elph(ii)%D0 = gIN%elph(ii)%D0
+      end do
     end if
-    if (allocated(gIN%elph%orbsperatm)) then
-      isz = size(gIN%elph%orbsperatm)
-      allocate(gOUT%elph%orbsperatm(isz))
-      gOUT%elph%orbsperatm = gIN%elph%orbsperatm
-    end if
-    gOUT%elph%defined = gIN%elph%defined
-    gOUT%elph%model = gIN%elph%model
-    gOUT%elph%scba_niter = gIN%elph%scba_niter
 
     ! copy greendens%bp
     if (allocated(gIN%bp%coupling)) then
@@ -358,7 +407,7 @@ contains
     !> Duplicate
     type(TNEGFTunDos), intent(out) :: gOUT
 
-    integer :: isz
+    integer :: isz, ii
 
     ! copy tundos
     if (allocated(gIN%ni)) then
@@ -399,19 +448,29 @@ contains
     gOUT%broadeningDelta = gIN%broadeningDelta
 
     ! copy tundos%elph
-    if (allocated(gIN%elph%coupling)) then
-      isz = size(gIN%elph%coupling)
-      allocate(gOUT%elph%coupling(isz))
-      gOUT%elph%coupling = gIN%elph%coupling
+    if (allocated(gIN%elph)) then
+      allocate(gOUT%elph(size(gIN%elph)))
+      do ii = 1, size(gIN%elph)
+        if (allocated(gIN%elph(ii)%coupling)) then
+          isz = size(gIN%elph(ii)%coupling)
+          allocate(gOUT%elph(ii)%coupling(isz))
+          gOUT%elph(ii)%coupling = gIN%elph(ii)%coupling
+        end if
+        if (allocated(gIN%elph(ii)%orbsperatm)) then
+          isz = size(gIN%elph(ii)%orbsperatm)
+          allocate(gOUT%elph(ii)%orbsperatm(isz))
+          gOUT%elph(ii)%orbsperatm = gIN%elph(ii)%orbsperatm
+        end if
+        gOUT%elph(ii)%defined = gIN%elph(ii)%defined
+        gOUT%elph(ii)%model = gIN%elph(ii)%model
+        gOUT%elph(ii)%scba_niter = gIN%elph(ii)%scba_niter
+        gOUT%elph(ii)%wq = gIN%elph(ii)%wq
+        gOUT%elph(ii)%eps_inf = gIN%elph(ii)%eps_inf
+        gOUT%elph(ii)%eps_r = gIN%elph(ii)%eps_r
+        gOUT%elph(ii)%q0 = gIN%elph(ii)%q0
+        gOUT%elph(ii)%D0 = gIN%elph(ii)%D0
+      end do
     end if
-    if (allocated(gIN%elph%orbsperatm)) then
-      isz = size(gIN%elph%orbsperatm)
-      allocate(gOUT%elph%orbsperatm(isz))
-      gOUT%elph%orbsperatm = gIN%elph%orbsperatm
-    end if
-    gOUT%elph%defined = gIN%elph%defined
-    gOUT%elph%model = gIN%elph%model
-    gOUT%elph%scba_niter = gIN%elph%scba_niter
 
     ! copy tundos%bp
     if (allocated(gIN%bp%coupling)) then

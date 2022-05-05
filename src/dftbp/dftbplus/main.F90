@@ -59,7 +59,7 @@ module dftbp_dftbplus_main
   use dftbp_dftbplus_eigenvects, only : diagDenseMtx
   use dftbp_dftbplus_elstattypes, only : elstatTypes
   use dftbp_dftbplus_forcetypes, only : forceTypes
-  use dftbp_dftbplus_initprogram, only : TDftbPlusMain, TCutoffs, TNegfInt, autotestTag, bandOut,&
+  use dftbp_dftbplus_initprogram, only : TDftbPlusMain, TCutoffs, autotestTag, TNegfInt, bandOut,&
       & fCharges, fShifts, fStopScc, mdOut, userOut, fStopDriver, hessianOut, resultsTag,&
       & derivEBandOut
   use dftbp_dftbplus_inputdata, only : TNEGFInfo
@@ -705,8 +705,9 @@ contains
 
     #:if WITH_TRANSPORT
       if (this%tNegf) then
-        call setupNegfStuff(this%negfInt, this%denseDesc, this%transpar, this%ginfo,&
-            & this%neighbourList, this%nNeighbourSK, this%img2CentCell, this%orb)
+        call this%negfInt%setup_structure(this%denseDesc, this%transpar, this%ginfo%greendens, &
+            &  this%ginfo%tundos, this%coord, this%neighbourList, this%nNeighbourSK, &
+            &  this%img2CentCell, this%orb)
       end if
     #:endif
 
@@ -1978,49 +1979,6 @@ contains
 
   end subroutine handleCoordinateChange
 
-
-#:if WITH_TRANSPORT
-
-  !> Initialise transport
-  subroutine setupNegfStuff(negfInt, denseDescr, transpar, ginfo, neighbourList, nNeighbourSK,&
-      & img2CentCell, orb)
-
-    !> NEGF interface
-    type(TNegfInt), intent(inout) :: negfInt
-
-    !> Dense matrix descriptor
-    type(TDenseDescr), intent(in) :: denseDescr
-
-    !> Transport settings
-    type(TTransPar), intent(in) :: transpar
-
-    !> libNEGF data
-    type(TNEGFInfo), intent(in) :: ginfo
-
-    !> Atomic orbital information
-    type(TOrbitals), intent(in) :: orb
-
-    !> Image atoms to their equivalent in the central cell
-    integer, intent(in) :: img2CentCell(:)
-
-    !> List of neighbouring atoms
-    type(TNeighbourList), intent(in) :: neighbourList
-
-    !> Number of neighbours of each real atom
-    integer, intent(in) :: nNeighbourSK(:)
-
-    ! known issue about the PLs: We need an automatic partitioning
-    call negfInt%setup_csr(denseDescr%iAtomStart, neighbourList%iNeighbour, nNeighbourSK,&
-        & img2CentCell, orb)
-
-    call negfInt%setup_str(denseDescr, transpar, ginfo%greendens, neighbourList%iNeighbour,&
-        & nNeighbourSK, img2CentCell)
-
-    call negfInt%setup_dephasing(ginfo%tundos)  !? why tundos
-
-  end subroutine setupNegfStuff
-
-#:endif
 
 
   !> Decides, whether restart file should be written during the run.
