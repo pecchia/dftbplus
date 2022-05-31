@@ -342,14 +342,16 @@ contains
       ! Put the rows belonging to a certain atom into the appropriate column
       ! of the block column. (Matrix is assumed to be symmetric!)
       tmpCol(:,:) = 0.0_dp
-      nOrb1 = orb%nOrbAtom(iAt1)
-      iCol = iAtomStart(iAt1)
-      do iOrb1 = 1, nOrb1
-        ii = iCol + iOrb1 - 1
-        do ind = csr%rowpnt(ii), csr%rowpnt(ii+1) - 1
-          tmpCol(csr%colind(ind), iOrb1) = real(csr%nzval(ind))
-        end do
-      end do
+      if (allocated(csr%nzval)) then
+         nOrb1 = orb%nOrbAtom(iAt1)
+         iCol = iAtomStart(iAt1)
+         do iOrb1 = 1, nOrb1
+           ii = iCol + iOrb1 - 1
+           do ind = csr%rowpnt(ii), csr%rowpnt(ii+1) - 1
+             tmpCol(csr%colind(ind), iOrb1) = real(csr%nzval(ind))
+           end do
+         end do
+      end if
 
       ! Unfold the block column into the internal sparse format
       do iNeigh = 0, nNeighbor(iAt1)
@@ -684,16 +686,17 @@ contains
       ! Put the rows belonging to a certain atom into the appropriate column
       ! of the block column. (Matrix is assumed to be hermitian!)
       tmpCol(:,:) = (0.0_dp, 0.0_dp)
-      nOrb1 = orb%nOrbAtom(iAt1)
-      iCol = iAtomStart(iAt1)
-      do iOrb1 = 1, nOrb1
-        ii = iCol + iOrb1 - 1
-        do ind = csr%rowpnt(ii), csr%rowpnt(ii+1) - 1
-          tmpCol(csr%colind(ind), iOrb1) = conjg(csr%nzval(ind))
-          ! NOTE: why conjg ??
-        end do
-      end do
-
+      if (allocated(csr%nzval)) then
+         nOrb1 = orb%nOrbAtom(iAt1)
+         iCol = iAtomStart(iAt1)
+         do iOrb1 = 1, nOrb1
+           ii = iCol + iOrb1 - 1
+           do ind = csr%rowpnt(ii), csr%rowpnt(ii+1) - 1
+             tmpCol(csr%colind(ind), iOrb1) = conjg(csr%nzval(ind))
+             ! NOTE: why conjg ??
+           end do
+         end do
+      end if
       ! Unfold the block column into the internal sparse format
       do iNeigh = 0, nNeighbor(iAt1)
         ind = iPair(iNeigh,iAt1) + 1

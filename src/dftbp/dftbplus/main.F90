@@ -708,7 +708,7 @@ contains
     #:if WITH_TRANSPORT
       if (this%tNegf) then
         call this%negfInt%setup_structure(this%denseDesc, this%transpar, this%ginfo%greendens, &
-            &  this%ginfo%tundos, this%coord, this%neighbourList, this%nNeighbourSK, &
+            &  this%ginfo%tundos, this%coord, this%latVec, this%neighbourList, this%nNeighbourSK, &
             &  this%img2CentCell, this%orb)
       end if
     #:endif

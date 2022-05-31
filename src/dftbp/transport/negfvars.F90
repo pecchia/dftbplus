@@ -71,6 +71,9 @@ module dftbp_transport_negfvars
     !> whether k -> -k symmetry
     logical :: tKSymmetry = .true.
 
+    !> whether tri-diagonal blocks are computed
+    logical :: tTridiagonal = .true.
+
   end type TElPh
 
 
@@ -173,6 +176,9 @@ module dftbp_transport_negfvars
 
     !> compute layer-to-layer currents
     logical :: layerCurrent = .false.
+
+    !> compute layer-to-layer currents
+    logical :: meirWingreen = .false.
 
     !> contact temperatures
     real(dp), allocatable :: kbT(:)

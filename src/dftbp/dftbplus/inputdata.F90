@@ -283,6 +283,7 @@ module dftbp_dftbplus_inputdata
     logical :: tSpinOrbit    = .false.
     logical :: tDualSpinOrbit = .false.
     logical :: t2Component   = .false.
+    logical :: tReduceByKInversion = .true.
 
     !> initial spin pattern
     real(dp), allocatable :: initialSpins(:,:)

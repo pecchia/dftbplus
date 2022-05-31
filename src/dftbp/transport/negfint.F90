@@ -19,11 +19,12 @@ module dftbp_transport_negfint
   use dftbp_extlibs_negf, only : convertcurrent, eovh, getel, lnParams, pass_DM, Tnegf, units,&
       & z_CSR, READ_SGF, COMP_SGF, COMPSAVE_SGF, associate_lead_currents, associate_ldos,&
       & associate_transmission, associate_current, compute_current, compute_density_dft,&
-      & compute_ldos, create, create_scratch, destroy, set_readoldDMsgf, destroy_matrices,&
+      & compute_ldos, create, create_scratch, destroy, set_readoldDMsgf, create_hs, &
       & destroy_negf, get_params, init_contacts, init_ldos, init_negf, init_structure, pass_hs,&
-      & set_bp_dephasing, set_drop, set_elph_block_dephasing, set_elph_dephasing, create_hs,&
+      & set_bp_dephasing, set_drop, set_elph_block_dephasing, set_elph_dephasing, destroy_hs,&
       & set_elph_s_dephasing, set_ldos_indexes, set_params, set_scratch, writememinfo,&
-      & writepeakinfo, printcsr, set_elph_inelastic, set_kpoints, init_basis, compute_layer_current
+      & writepeakinfo, printcsr, set_elph_polaroptical, set_elph_nonpolaroptical, set_kpoints, &
+      & init_basis, compute_layer_current, compute_meir_wingreen, set_scba_tolerances
   use dftbp_io_formatout, only : writeXYZFormat
   use dftbp_io_message, only : error, warning
   use dftbp_math_eigensolver, only : heev
@@ -33,7 +34,7 @@ module dftbp_transport_negfint
   use dftbp_type_commontypes, only : TOrbitals
   use dftbp_type_densedescr, only : TDenseDescr
 #:if WITH_MPI
-  use dftbp_extlibs_mpifx, only : mpifx_comm, MPI_SUM, mpifx_reduceip, mpifx_allreduceip
+  use dftbp_extlibs_mpifx, only : mpifx_comm, MPI_SUM, mpifx_reduceip, mpifx_allreduceip, mpifx_barrier
   use dftbp_extlibs_negf, only : negf_mpi_init, negf_cart_init
 #:endif
   implicit none
@@ -56,7 +57,14 @@ module dftbp_transport_negfint
     !> compressed sparse row overlap
     type(z_CSR) :: csrOver
 
+    !> whether the calculation has inelastic scattering
     logical :: tInelastic = .false.
+
+    !> whether layer currents should be computed 
+    logical :: tLayerCurrents = .false.
+
+    !> whether layer currents should be computed 
+    logical :: tMeirWingreen = .false.
 
   contains
 
@@ -114,7 +122,8 @@ contains
     type(lnParams) :: params
 
 #:if WITH_MPI
-    call negf_mpi_init(env%mpi%globalComm)
+    call negf_mpi_init(this%negf, env%mpi%globalComm, env%mpi%groupComm, &
+         & env%mpi%interGroupComm)
 #:endif
 
     if (transpar%defined) then
@@ -345,6 +354,10 @@ contains
       params%Emin =  tundos%Emin
       params%Emax =  tundos%Emax
       params%Estep = tundos%Estep
+      write(stdOut,*) 'Integration of Current Parameters'
+      write(stdOut,*) 'Emin:',params%Emin
+      write(stdOut,*) 'Emax:',params%Emax
+      write(stdOut,*) 'Estep:',params%Estep
 
       ! For the moment tunneling and ldos SGFs are always recomputed
       params%readOldT_SGFs = COMP_SGF
@@ -375,13 +388,18 @@ contains
     end if
     
     call this%setup_kpoints(kPoint, kWeight, localKS(1,:))
-    
+  
+    if (tundos%defined) then
+      this%tLayerCurrents = tundos%layerCurrent      
+      this%tMeirWingreen = tundos%meirWingreen     
+    end if
+
   end subroutine TNegfInt_init
 
 
   !> geometry-dependent initializations 
   subroutine setup_structure(this, denseDescr, transpar, greendens, tundos, coords, &
-      & neighbourList, nNeighbourSK, img2CentCell, orb)
+      & latVec, neighbourList, nNeighbourSK, img2CentCell, orb)
 
     !> NEGF instance
     class(TNegfInt), intent(inout) :: this
@@ -401,6 +419,9 @@ contains
     !> atomic coordinates
     real(dp), intent(in) :: coords(:,:)
 
+    !> lattice vectors
+    real(dp), intent(in) :: latVec(:,:)
+
     !> List of neighbouring atoms
     type(TNeighbourList), intent(in) :: neighbourList
 
@@ -417,8 +438,8 @@ contains
     call this%setup_csr(denseDescr%iAtomStart, neighbourList%iNeighbour, nNeighbourSK,&
         & img2CentCell, orb)
 
-    call this%setup_str(denseDescr, transpar, greendens, coords, neighbourList%iNeighbour,&
-        & nNeighbourSK, img2CentCell)
+    call this%setup_str(denseDescr, transpar, greendens, coords, latVec, &
+        & neighbourList%iNeighbour, nNeighbourSK, img2CentCell)
     
     call this%setup_dephasing(tundos) 
 
@@ -462,6 +483,7 @@ contains
 
     integer :: ii
     real(dp) :: kbT, cell_area, deltaz
+    real(dp) :: elastic_tol, inelastic_tol
 
     kbT = 0.0_dp
     do ii = 1, size(negf%cont)
@@ -471,8 +493,8 @@ contains
     cell_area = 1.0_dp
     deltaz = 0.01_dp
     inelastic = .false.
-
-    print*,'debug create elph size:', size(elph)
+    elastic_tol = 10.0
+    inelastic_tol = 10.0
 
     do ii = 1, size(elph)
       write(stdOut,*)
@@ -480,30 +502,35 @@ contains
       case(interaction_models%dephdiagonal)
         write(stdOut,*) 'Setting local fully diagonal (FD) elastic dephasing model'
         call set_elph_dephasing(negf, elph(ii)%coupling, elph(ii)%scba_niter)
+        if ( elph(ii)%scba_tol < elastic_tol ) elastic_tol = elph(ii)%scba_tol 
       case(interaction_models%dephatomblock)
         write(stdOut,*) 'Setting local block diagonal (BD) elastic dephasing model'
         call set_elph_block_dephasing(negf, elph(ii)%coupling, elph(ii)%orbsperatm, &
              & elph(ii)%scba_niter)
+        if ( elph(ii)%scba_tol < elastic_tol ) elastic_tol = elph(ii)%scba_tol 
       case(interaction_models%dephoverlap)
         write(stdOut,*) 'Setting overlap mask (OM) block diagonal elastic dephasing model'
         call set_elph_s_dephasing(negf, elph(ii)%coupling, elph(ii)%orbsperatm, &
              & elph(ii)%scba_niter)
+        if ( elph(ii)%scba_tol < elastic_tol ) elastic_tol = elph(ii)%scba_tol 
       case(interaction_models%polaroptical)
         write(stdOut,*) 'Setting polar-optical inelastic scattering model'
-        call set_elph_inelastic(negf, elph(ii)%coupling, elph(ii)%wq, kbT, &
+        call set_elph_polaroptical(negf, elph(ii)%coupling, elph(ii)%wq, kbT, &
              & deltaz, elph(ii)%eps_r, elph(ii)%eps_inf, elph(ii)%q0, &
-             & cell_area, elph(ii)%scba_niter)
+             & cell_area, elph(ii)%scba_niter, elph(ii)%tTridiagonal)
+        if ( elph(ii)%scba_tol < inelastic_tol ) inelastic_tol = elph(ii)%scba_tol 
         if (.not.inelastic) inelastic = .true.
       case(interaction_models%nonpolaroptical)
         write(stdOut,*) 'Setting non polar-optical inelastic scattering model'
-        call set_elph_inelastic(negf, elph(ii)%coupling, elph(ii)%wq, kbT, &
-             & deltaz, elph(ii)%eps_r, elph(ii)%eps_inf, elph(ii)%q0, &
-             & cell_area, elph(ii)%scba_niter)
+        call set_elph_nonpolaroptical(negf, elph(ii)%coupling, elph(ii)%wq, kbT, &
+             & deltaz, elph(ii)%D0, cell_area, elph(ii)%scba_niter, elph(ii)%tTridiagonal)
+        if ( elph(ii)%scba_tol < inelastic_tol ) inelastic_tol = elph(ii)%scba_tol 
         if (.not.inelastic) inelastic = .true.
       case default
         call error("Electron-phonon model is not supported ")
       end select
     end do
+    call set_scba_tolerances(negf, elastic_tol, inelastic_tol)
 
   end subroutine negf_setup_elph
 
@@ -585,7 +612,8 @@ contains
 
 
   !> Initialise the structures for the libNEGF library
-  subroutine setup_str(this, denseDescr, transpar, greendens, coords, iNeigh, nNeigh, img2CentCell)
+  subroutine setup_str(this, denseDescr, transpar, greendens, coords, latVec, &
+              & iNeigh, nNeigh, img2CentCell)
 
     !> Instance.
     class(TNegfInt), intent(inout) :: this
@@ -601,6 +629,9 @@ contains
 
     !> atomic coordinates as local basis centers
     real(dp), intent(in) :: coords(:,:)
+
+    !> lattice vectors
+    real(dp), intent(in) :: latVec(:,:)
 
     !> number of neighbours for each atom
     Integer, intent(in) :: nNeigh(:)
@@ -743,9 +774,12 @@ contains
 
     call init_structure(this%negf, ncont, surf_start, surf_end, cont_end, nbl, PL_end, cblk)
 
-    call init_basis(this%negf, coords, iatm2, densedescr%iatomstart)  
-
-    call this%negf%str%print_Tstruct(stdOut)
+    if (size(latVec) > 0) then
+      call init_basis(this%negf, coords, iatm2, densedescr%iatomstart, latVec)  
+    else  
+      call init_basis(this%negf, coords, iatm2, densedescr%iatomstart)  
+    end if
+    !call this%negf%str%print_Tstruct(stdOut)
 
   end subroutine setup_str
 
@@ -763,7 +797,7 @@ contains
     !> index of kpoints in the array (maps local to global)
     integer, intent(in) :: local_kindex(:)
   
-    call set_kpoints(this%negf, kpoints, kweights, local_kindex)
+    call set_kpoints(this%negf, kpoints, kweights, local_kindex, kSamplingType=1)
 
   end subroutine setup_kpoints
 
@@ -915,8 +949,6 @@ contains
 
     call compute_density_dft(negf)
 
-    call destroy_matrices(negf)
-
   end subroutine negf_density
 
 
@@ -957,8 +989,6 @@ contains
     call pass_HS(negf,HH,SS)
 
     call compute_ldos(negf)
-
-    call destroy_matrices(negf)
 
     call associate_ldos(negf, ledos)
 
@@ -1106,25 +1136,35 @@ contains
   end subroutine negf_current
 
   !> Interface subroutine to call calculation of currents
-  subroutine negf_current_inel(negf, curr, currents)
+  subroutine negf_current_inel(negf, lc_or_mw, curr, ledos, currents)
 
     !> NEGF container
     type(TNegf), intent(inout), target :: negf
 
+    !> logical flag for layer-currents or Meir-Wingreen 
+    logical, intent(in) :: lc_or_mw
+
     !> current magnitudes
     real(dp), dimension(:,:), pointer :: curr
+
+    !> local density of states
+    real(dp), dimension(:,:), pointer :: ledos
 
     !> current directions
     real(dp), dimension(:), pointer :: currents
     
     type(TNegf), pointer :: pNegf
-    
-    call compute_layer_current(negf)
-
+   
+    if (lc_or_mw) then 
+      call compute_layer_current(negf)
+    else
+      call compute_meir_wingreen(negf)
+    end if
     !BA: Very questionable technique, should be replaced by explicit passing
     pNegf => negf
-    
+
     call associate_current(pNegf, curr)
+    call associate_ldos(pNegf, ledos)
     
     call associate_lead_currents(pNegf, currents)
     if (.not.associated(currents)) then
@@ -1213,9 +1253,6 @@ contains
     pCsrHam => this%csrHam
     pCsrOver => this%csrOver
 
-#:if WITH_MPI
-    call negf_mpi_init(env%mpi%groupComm)
-#:endif
     !Decide what to do with surface GFs.
     !sets readOldSGF: if it is 0 or 1 it is left so
     if (this%negf%readOldDM_SGFs.eq.COMPSAVE_SGF) then
@@ -1360,9 +1397,6 @@ contains
 
     pCsrEDens => csrEDens
 
-#:if WITH_MPI
-    call negf_mpi_init(env%mpi%groupComm)
-#:endif
     !Decide what to do with surface GFs.
     !sets readOldSGF: if it is 0 or 1 it is left so
     if (this%negf%readOldDM_SGFs.eq.COMPSAVE_SGF) then
@@ -1526,10 +1560,6 @@ contains
     pCsrHam => this%csrHam
     pCsrOver => this%csrOver
 
-#:if WITH_MPI
-    call negf_mpi_init(env%mpi%groupComm)
-#:endif
-
     unitsOfEnergy%name = "H"
     unitsOfCurrent%name = "A"
 
@@ -1541,8 +1571,12 @@ contains
     end if
     nTotKS = nS * size(kpoints, dim=2)
     ncont = size(mu,1)
-  
-    if (this%tInelastic) then
+#:if WITH_MPI
+    call mpifx_barrier(env%mpi%groupComm)
+    call mpifx_barrier(env%mpi%interGroupComm)
+#:endif
+
+    if (this%tInelastic .or. this%tLayerCurrents .or. this%tMeirWingreen) then
       call calc_current_inel()
     else  
       call calc_current_ela()
@@ -1688,25 +1722,29 @@ contains
  
       params%mu(1:ncont) = mu(1:ncont,1)
       call set_params(this%negf, params)
-      write(stdOut, *) 'Passing H(k), S(k)'
+      call destroy_HS(this%negf)
       call create_HS(this%negf, nKS)
+      
       do iKS = 1, nKS
         iK = groupKS(1, iKS)
         iS = groupKS(2, iKS)
-        
-        write(stdOut,*) 'Spin',iS,'k-point',iK,'k-weight',kWeights(iK)
- 
+
         call foldToCSR(this%csrHam, ham(:,iS), kPoints(:,iK), iAtomStart, iPair, iNeighbor,&
               & nNeighbor, img2CentCell, iCellVec, cellVec, orb)
  
         call foldToCSR(this%csrOver, over, kPoints(:,ik), iAtomStart, iPair, iNeighbor, nNeighbor,&
               & img2CentCell, iCellVec, cellVec, orb)
- 
-        call pass_HS(this%negf, pCsrHam, pCsrOver, iK)
+        call pass_HS(this%negf, pCsrHam, pCsrOver, iKS)
       end do   
- 
-      call negf_current_inel(this%negf, currPMat, currPVec)
- 
+      
+      if (this%tLayerCurrents) then
+        call negf_current_inel(this%negf, .true., currPMat, ldosPMat, currPVec)
+      else if (this%tMeirWingreen) then
+        call negf_current_inel(this%negf, .false., currPMat, ldosPMat, currPVec)
+      else
+        call error('Internal error: no adequate inelastic method for currents.')     
+      end if
+
       if (.not.allocated(currLead)) then
         allocate(currLead(size(currPVec)), stat=err)
         if (err /= 0) then
@@ -1714,14 +1752,28 @@ contains
         end if
         currLead(:) = 0.0_dp
       end if
-      currLead(:) = currLead + currPVec
+      currLead(:) = currPVec
       ! converts from internal atomic units into amperes
       currLead(:) = currLead * convertCurrent(unitsOfEnergy, unitsOfCurrent)
  
+      if (.not.allocated(ldosMat)) then
+        allocate(ldosMat(size(ldosPMat,1),size(ldosPMat,2)), stat=err)
+        if (err /= 0) then
+          call error('Allocation error (ldosMat)')
+        end if
+        ldosMat = 0.0_dp
+      end if
+      ldosMat = ldosPMat
+
       do ii = 1, size(currLead)
         write(stdOut, *)
-        write(stdOut, '(1x,a,i3,i3,a,ES14.5,a,a)') ' Layers: ',params%ni(ii),params%nf(ii),&
-            & ' current: ', currLead(ii),' ',unitsOfCurrent%name
+        if (this%tLayerCurrents) then
+          write(stdOut, '(1x,a,i3,i3,a,ES14.5,a,a)') ' Layer: ',params%ni(ii),params%nf(ii),&
+                & ' current: ', currLead(ii),' ',unitsOfCurrent%name
+        else if (this%tMeirWingreen) then  
+          write(stdOut, '(1x,a,i3,i3,a,ES14.5,a,a)') ' Contact: ',params%ni(ii),params%nf(ii),&
+                & ' current: ', currLead(ii),' ',unitsOfCurrent%name
+        end if
       end do
 
     end subroutine calc_current_inel
@@ -2085,9 +2137,6 @@ contains
     pCsrDens => csrDens
     pCsrEDens => csrEDens
 
-#:if WITH_MPI
-    call negf_mpi_init(env%mpi%groupComm)
-#:endif
     call get_params(this%negf, params)
 
     !Decide what to do with surface GFs.

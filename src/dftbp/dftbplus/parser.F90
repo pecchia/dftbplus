@@ -158,7 +158,7 @@ contains
 
     type(TOrbitals) :: orb
     type(fnode), pointer :: root, tmp, driverNode, hamNode, analysisNode, child, dummy
-    logical :: tReadAnalysis
+    logical :: tReadAnalysis, tBadIntegratingKpoints
     integer, allocatable :: implicitParserVersion
 
     write(stdout, '(A,1X,I0,/)') 'Parser version:', parserVersion
@@ -201,11 +201,15 @@ contains
     call readHamiltonian(hamNode, input%ctrl, input%geom, input%slako, input%transpar,&
         & input%ginfo%greendens, input%poisson)
 
-    ! Dephasing after Hamiltonian is ok?
+    ! NOTE: Read Dephasing must be after because of slako%orb 
     call getChild(root, "Dephasing", child, requested=.false.)
     if (associated(child)) then
       !call detailedError(child, "Be patient... Dephasing feature will be available soon!")
-      call readDephasing(child, input%slako%orb, input%geom, input%transpar, input%ginfo%tundos)
+      call readDephasing(child, input%slako%orb, input%geom, input%transpar, input%ginfo%tundos, &
+            & input%ctrl%tReduceByKInversion)
+
+      ! read k-sampling again for non-symmetric reduction
+      call readKPoints(hamNode, input%ctrl, input%geom, tBadIntegratingKPoints)
     end if
 
   #:else
@@ -1564,6 +1568,7 @@ contains
 
       ctrl%tSpinOrbit = .true.
       ctrl%t2Component = .true.
+      ctrl%tReduceByKInversion = .false.
 
       call getChildValue(child, "Dual", ctrl%tDualSpinOrbit, .true.)
 
@@ -2820,13 +2825,8 @@ contains
         call detailedError(value1, "The components of the supercell matrix &
             &must be integers.")
       end if
-      if (.not.ctrl%tSpinOrbit) then
-        call getSuperSampling(coeffsAndShifts(:,1:3), modulo(coeffsAndShifts(:,4), 1.0_dp),&
-            & ctrl%kPoint, ctrl%kWeight, reduceByInversion=.true.)
-      else
-        call getSuperSampling(coeffsAndShifts(:,1:3), modulo(coeffsAndShifts(:,4), 1.0_dp),&
-            & ctrl%kPoint, ctrl%kWeight, reduceByInversion=.false.)
-      end if
+      call getSuperSampling(coeffsAndShifts(:,1:3), modulo(coeffsAndShifts(:,4), 1.0_dp),&
+            & ctrl%kPoint, ctrl%kWeight, reduceByInversion=ctrl%tReduceByKInversion)
       ctrl%nKPoint = size(ctrl%kPoint, dim=2)
 
     case ("klines")
@@ -5119,37 +5119,47 @@ contains
 
   #:if WITH_TRANSPORT
     call getChild(node, "TunnelingAndDOS", child, requested=.false.)
+    if (.not.associated(child)) then
+      call getChild(node, "LayerCurrents", child, requested=.false.)
+      if (.not.associated(child)) then
+        call getChild(node, "MeirWingreen", child, requested=.false.)
+        if (.not.associated(child) .and. &
+          & ctrl%solver%isolver==electronicSolverTypes%OnlyTransport) then
+          call detailedError(node, "The TransportOnly solver requires either &
+               TunnelingAndDos or LayerCurrent or MeirWingreen to be present.")
+        end if   
+      end if
+    end if
     if (associated(child)) then
+      call getNodeName(child, buffer)
       if (.not.transpar%defined) then
-        call error("Block TunnelingAndDos requires Transport block.")
+        call error("Block "//char(buffer)//" requires Transport block.")
       end if
       if (.not.transpar%taskUpload) then
-        call error("Block TunnelingAndDos not compatible with task=contactHamiltonian")
+        call error("Block "//char(buffer)//" not compatible with task=contactHamiltonian")
       end if
       if (.not. allocated(orb)) then
         call error("Orbital information from SK-files missing (xTB Hamiltonian not compatible&
             & with transport yet)")
       end if
-      call readTunAndDos(child, orb, geo, tundos, transpar, ctrl%tempElec)
-    end if
-    call getChild(node, "LayerCurrents", child2, requested=.false.)
-    if (associated(child2)) then
-      if (.not.transpar%defined) then
-        call error("Block LayerCurrents requires Transport block.")
-      end if
-      if (.not.transpar%taskUpload) then
-        call error("Block LayerCurrents not compatible with task=contactHamiltonian")
-      end if
-      if (.not. allocated(orb)) then
-        call error("Orbital information from SK-files missing (xTB Hamiltonian not compatible&
-            & with transport yet)")
-      end if
-      call readLayerCurrents(child2, orb, geo, tundos, transpar, ctrl%tempElec)
-    end if
-    if (.not.associated(child) .and. .not.associated(child2) .and. &
-         & ctrl%solver%isolver==electronicSolverTypes%OnlyTransport) then
-      call detailedError(node, "The TransportOnly solver requires a TunnelingAndDos block to be&
-          & present.")
+      call readCommonBlock(child, orb, geo, tundos, transpar, ctrl%tempElec)
+      select case(char(buffer))
+      case ("tunnelinganddos")
+        if (allocated(tundos%elph)) then
+          if (any(tundos%elph(:)%wq > 0.0_dp)) then
+             call error("TunnelingAndDos not compatible with inelastic scattering. &
+               & Use LayerCurrents or MeirWingreen instead.")
+          end if      
+        end if      
+        call readTunAndDos(child, orb, geo, tundos, transpar)
+      case ("layercurrents")
+        if (all(transpar%contacts(:)%potential.eq.transpar%contacts(1)%potential)) then
+          call detailedError(node,"Layer currents need a finite bias")  
+        end if
+        call readLayerCurrents(child, orb, geo, tundos, transpar)
+      case ("meirwingreen")
+        call readMeirWingreen(child, orb, geo, tundos, transpar)
+      end select
     end if
   #:endif
 
@@ -6565,7 +6575,7 @@ contains
 
 
   !> Read dephasing block
-  subroutine readDephasing(node, orb, geom, tp, tundos)
+  subroutine readDephasing(node, orb, geom, tp, tundos, tReduceByKInversion)
 
     !> Input tree node
     type(fnode), pointer :: node
@@ -6581,6 +6591,9 @@ contains
 
     !> Parameters of tunneling and dos calculation
     type(TNEGFTunDos), intent(inout) :: tundos
+
+    !> Controls whether the k-sampling should be reduced by inversion symmetry
+    logical, intent(inout) :: tReduceByKInversion
 
     type(fnode), pointer :: value1, child
     type(fnodeList), pointer :: children_el, children_inel
@@ -6604,6 +6617,7 @@ contains
       call getItem1(children_inel, ii, child)
       if (associated(child)) then
         call readInelastic(child, tundos%elph(nEl+ii), geom, orb, tp)
+        tReduceByKInversion = .false.
       end if
     end do
 
@@ -6648,7 +6662,6 @@ contains
     type(fnode), pointer :: field, child, child2
     type(string) :: modifier, dephtype
     logical :: block_model, semilocal_model
-
 
     call getChildValue(node, "", field, child=child)
     call getNodeName2(field, dephtype)
@@ -6718,13 +6731,12 @@ contains
       call getChild(child, "PolarOptical", child2)
       call read_common_part(child2)
       call getChildValue(child2, "EpsInfinity", elph%eps_inf, default=1.0_dp)
-      print*,'epsilon',elph%eps_inf
       call getChildValue(child2, "Eps0", elph%eps_r, default=1.0_dp)
       call getChildValue(child2, "ScreeningLength", tmp, 10.0_dp, modifier=modifier,&
           & child=field)
       call convertByMul(char(modifier), lengthUnits, field, tmp)
       elph%q0 = 1.0_dp/tmp
-    case ("NonPolarOptical")
+    case ("nonpolaroptical")
       elph%model = interaction_models%nonpolaroptical
       call getChild(child, "NonPolarOptical", child2)
       call read_common_part(child2)
@@ -6747,10 +6759,14 @@ contains
       call getChildValue(node, "SCBATolerance", elph%scba_tol, default=1.0d-7)
       call getChildValue(node, "PhononFrequency", tmp, 0.0_dp, modifier=modifier,&
            & child=field)
+      if (tmp == 0.0_dp) then
+         call detailedError(node, "PhononFrequency must be defined > 0.0")
+      end if      
       call convertByMul(char(modifier), energyUnits, field, tmp)
       elph%wq = tmp
       call getChildValue(node, "Umklapp", elph%tUmklapp, .false.)
       call getChildValue(node, "KSymmetry", elph%tKSymmetry, .true.)
+      call getChildValue(node, "Tridiagonal", elph%tTridiagonal, .true.)
 
       call readCoupling(node, elph, geom, orb, tp)
     end subroutine read_common_part
@@ -6936,7 +6952,7 @@ contains
 
 
   !> Read Tunneling and Dos options from analysis block
-  subroutine readTunAndDos(root, orb, geo, tundos, transpar, tempElec)
+  subroutine readCommonBlock(root, orb, geo, tundos, transpar, tempElec)
     type(fnode), pointer :: root
     type(TOrbitals), intent(in) :: orb
     type(TGeometry), intent(in) :: geo
@@ -6951,13 +6967,9 @@ contains
     integer :: ii, jj, ind, ncont, nKT
     real(dp) :: eRange(2), eRangeDefault(2)
     type(string) :: modifier
-    type(TWrappedInt1), allocatable :: iAtInRegion(:)
-    logical, allocatable :: tShellResInRegion(:)
-    character(lc), allocatable :: regionLabelPrefixes(:)
     type(TListReal) :: temperature
 
     tundos%defined = .true.
-
     ! ncont is needed for contact option allocation
     ncont = transpar%ncont
 
@@ -6965,8 +6977,17 @@ contains
     call getChildValue(root, "WriteLDOS", tundos%writeLDOS, .true.)
     call getChildValue(root, "WriteTunn", tundos%writeTunn, .true.)
 
+    call getChildValue(root, "Delta", tundos%delta, &
+        &1.0e-5_dp, modifier=modifier, child=field)
+    call convertByMul(char(modifier), energyUnits, field, &
+        &tundos%delta)
+    call getChildValue(root, "BroadeningDelta", tundos%broadeningDelta, &
+        &0.0_dp, modifier=modifier, child=field)
+    call convertByMul(char(modifier), energyUnits, field, &
+        &tundos%broadeningDelta)
     ! Read Temperature. Can override contact definition
     allocate(tundos%kbT(ncont))
+
     call getChild(root, "ContactTemperature", pTmp, modifier=modifier, requested=.false.)
     if (associated(pTmp)) then
       call init(temperature)
@@ -6994,7 +7015,6 @@ contains
     ! If the calculation is out of equilibrium, a default similar to
     ! GreensFunction RealAxisStep is set to ensure that the current
     ! can be calculated without manually specify the energy parameters.
-
     if (all(transpar%contacts(:)%potential.eq.0.0)) then
       ! No default meaningful
       call getChildValue(root, "EnergyRange", eRange, modifier=modifier,&
@@ -7028,6 +7048,29 @@ contains
 
     tundos%emin = eRange(1)
     tundos%emax = eRange(2)
+
+  end subroutine readCommonBlock
+ 
+  !> Read Tunneling and Dos options from analysis block
+  subroutine readTunAndDos(root, orb, geo, tundos, transpar)
+    type(fnode), pointer :: root
+    type(TOrbitals), intent(in) :: orb
+    type(TGeometry), intent(in) :: geo
+
+    !> tundos is the container to be filled
+    type(TNEGFTunDos), intent(inout) :: tundos
+    type(TTransPar), intent(inout) :: transpar
+
+    type(fnode), pointer :: pTmp, pNode, field
+    type(fnodeList), pointer :: pNodeList
+    integer :: ii, jj, ind, ncont
+    type(string) :: modifier
+    type(TWrappedInt1), allocatable :: iAtInRegion(:)
+    logical, allocatable :: tShellResInRegion(:)
+    character(lc), allocatable :: regionLabelPrefixes(:)
+
+    ncont = transpar%ncont
+
     ! Terminal currents
     call getChild(root, "TerminalCurrents", pTmp, requested=.false.)
       if (associated(pTmp)) then
@@ -7055,14 +7098,6 @@ contains
           end do
         end do
       end if
-      call getChildValue(root, "Delta", tundos%delta, &
-          &1.0e-5_dp, modifier=modifier, child=field)
-      call convertByMul(char(modifier), energyUnits, field, &
-          &tundos%delta)
-      call getChildValue(root, "BroadeningDelta", tundos%broadeningDelta, &
-          &0.0_dp, modifier=modifier, child=field)
-      call convertByMul(char(modifier), energyUnits, field, &
-          &tundos%broadeningDelta)
 
       call readPDOSRegions(root, geo, transpar%idxdevice, iAtInRegion, &
           & tShellResInRegion, regionLabelPrefixes)
@@ -7076,7 +7111,7 @@ contains
   end subroutine readTunAndDos
 
   !> Read LayerCurrents options from analysis block
-  subroutine readLayerCurrents(root, orb, geo, tundos, transpar, tempElec)
+  subroutine readLayerCurrents(root, orb, geo, tundos, transpar)
     type(fnode), pointer :: root
     type(TOrbitals), intent(in) :: orb
     type(TGeometry), intent(in) :: geo
@@ -7084,55 +7119,76 @@ contains
     !> tundos is the container to be filled
     type(TNEGFTunDos), intent(inout) :: tundos
     type(TTransPar), intent(inout) :: transpar
-    real(dp), intent(in) :: tempElec
 
-    integer :: ncont, nkT
-    real(dp) :: eRange(2), eRangeDefault(2)
-    type(string) :: modifier
-    type(fnode), pointer :: field
-
-    if (transpar%ncont > 2) then
-      call detailedError(root,"Layer currents works for 2 contacts only")  
-    end if  
-    tundos%defined = .true.
-
-    call getChildValue(root, "Delta", tundos%delta, &
-        &1.0e-5_dp, modifier=modifier, child=field)
-    call convertByMul(char(modifier), energyUnits, field, &
-        &tundos%delta)
-    call getChildValue(root, "BroadeningDelta", tundos%broadeningDelta, &
-        &0.0_dp, modifier=modifier, child=field)
-    call convertByMul(char(modifier), energyUnits, field, &
-        &tundos%broadeningDelta)
-
-    if (all(transpar%contacts(:)%potential.eq.0.0)) then
-      call detailedError(root,"Layer currents are computed for a bias")  
-    else
-      ! Default meaningful
-      ! nKT is set to GreensFunction default, i.e. 10
-      ! I avoid an explicit nKT option because I find it confusing here
-      ! (it makes sense only out of equilibrium)
-      ! Emin = min(-mu); Emax=max(-mu) where mu is Vi-min(Efi)
-      ! Note: if Efi != min(Efi) a built in potential is added in poisson
-      ! to aling the leads, we don't need to include it here
-      nKT = 10
-      eRangeDefault(1) = minval(-1.0*transpar%contacts(:)%potential) + &
-                        & minval(1.0*transpar%contacts(:)%eFermi(1)) -   &
-                        & nKT * maxval(tundos%kbT)
-      eRangeDefault(2) = maxval(-1.0*transpar%contacts(:)%potential) + &
-                        & minval(transpar%contacts(:)%eFermi(1)) +   &
-                        & nKT * maxval(tundos%kbT)
-      call getChildValue(root, "EnergyStep", tundos%estep, 6.65e-4_dp, &
-                          &modifier=modifier, child=field)
-      call convertByMul(char(modifier), energyUnits, field, tundos%estep)
-      call getChildValue(root, "EnergyRange", eRange, eRangeDefault, &
-                          modifier=modifier, child=field)
-      call convertByMul(char(modifier), energyUnits, field, eRange)
-    end if
-
+    integer :: ii
+    type(string) :: modifier, buffer
+    type(fnode), pointer :: pTmp, field
+    type(TWrappedInt1), allocatable :: iAtInRegion(:)
+    logical, allocatable :: tShellResInRegion(:)
+    character(lc), allocatable :: regionLabelPrefixes(:)
+    integer, allocatable :: tmpI1(:), iAt(:)
+    character(2) :: lay
+    character(lc) :: sAt1, sAt2
+     
+    allocate(tundos%ni(transpar%nPLs-1))
+    allocate(tundos%nf(transpar%nPLs-1))
+    do ii = 1, transpar%nPLs-1
+      tundos%ni(ii) = ii
+      tundos%nf(ii) = ii+1
+    end do
     tundos%layerCurrent = .true.
+     
+    ! Create DOS regions == Principal Layers 
+    allocate(tShellResInRegion(transpar%nPLs))
+    tShellResInRegion = .false.
+    allocate(regionLabelPrefixes(transpar%nPLs))
+    allocate(iAtInRegion(transpar%nPLs))
+    allocate(iAt(transpar%nPLs+1))
+    iAt(1:transpar%nPLs) = transpar%PL
+    iAt(transpar%nPLs+1) = transpar%idxdevice(2)+1
+    do ii = 1, transpar%nPLs
+      write(lay,'(I2.2)') ii
+      regionLabelPrefixes(ii) = "Layer"//lay
+      write(sAt1,'(I0)') iAt(ii)
+      write(sAt2,'(I0)') iAt(ii+1)-1
+      buffer =  trim(sAt1)//':'//trim(sAt2)
+      call getSelectedAtomIndices(root, char(buffer), geo%speciesNames,&
+          & geo%species(transpar%idxdevice(1) : transpar%idxdevice(2)), tmpI1,&
+          & selectionRange=[transpar%idxdevice(1), transpar%idxdevice(2)], indexRange=[1, geo%nAtom])
+      iAtInRegion(ii)%data = tmpI1
+    end do  
+
+    call transformPdosRegionInfo(iAtInRegion, tShellResInRegion, &
+            & regionLabelPrefixes, orb, geo%species, tundos%dosOrbitals, &
+            & tundos%dosLabels)
 
   end subroutine readLayerCurrents
+
+  !> Read Meir-Wingreen options from analysis block
+  subroutine readMeirWingreen(root, orb, geo, tundos, transpar)
+    type(fnode), pointer :: root
+    type(TOrbitals), intent(in) :: orb
+    type(TGeometry), intent(in) :: geo
+
+    !> tundos is the container to be filled
+    type(TNEGFTunDos), intent(inout) :: tundos
+    type(TTransPar), intent(inout) :: transpar
+
+    integer :: ii, ncont
+    type(string) :: modifier
+    type(fnode), pointer :: pTmp, field
+
+    ncont = transpar%ncont
+    allocate(tundos%ni(ncont))
+    allocate(tundos%nf(ncont))
+
+    do ii = 1, ncont
+      tundos%ni(ii) = ii
+      tundos%nf(ii) = ii
+    end do
+    tundos%meirWingreen = .true.
+
+  end subroutine readMeirWingreen
 
   !> Read bias information, used in Analysis and Green's function eigensolver
   subroutine readContacts(pNodeList, contacts, geom, task)
