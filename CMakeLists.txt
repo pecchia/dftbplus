@@ -9,7 +9,7 @@ dftbp_load_build_settings()
 
 set(DFTBPLUS_VERSION "20.2.1")
 
-project(dftbplus VERSION ${DFTBPLUS_VERSION} LANGUAGES Fortran C)
+project(dftbplus VERSION ${DFTBPLUS_VERSION} LANGUAGES Fortran C CUDA)
 
 dftbp_setup_build_type()
 dftbp_load_toolchain_settings()
@@ -105,6 +105,9 @@ if(WITH_GPU)
   list(APPEND PKG_CONFIG_REQUIRES magma)
 endif()
 
+if(WITH_TRANSPORT_GPU)
+  list(APPEND PKG_CONFIG_LIBS_PRIVATE ${CUDA_LIBRARY} ${CUBLAS_LIBRARY} ${CUSOLVER_LIBRARY})
+endif()
 
 #
 # Preprocessor details
