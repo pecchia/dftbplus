@@ -1,0 +1,18 @@
+diff --git a/lib/CMakeLists.txt b/lib/CMakeLists.txt
+index 8fd9245..c2d096b 100644
+--- a/lib/CMakeLists.txt
++++ b/lib/CMakeLists.txt
+@@ -28,6 +28,13 @@ if("${CMAKE_Fortran_COMPILER_ID}" STREQUAL "NAG")
+   set_source_files_properties(SOURCE ${sources-f90} PROPERTY COMPILE_FLAGS -mismatch)
+ endif()
+ 
++# Allow argument mismatch for recent GNU compilers
++if("${CMAKE_Fortran_COMPILER_ID}" STREQUAL "GNU")
++  if("${CMAKE_Fortran_COMPILER_VERSION}" VERSION_GREATER_EQUAL "11")
++    set_source_files_properties(SOURCE ${sources-f90} PROPERTY COMPILE_FLAGS -fallow-argument-mismatch)
++  endif()
++endif()
++
+ add_library(mpifx ${sources-f90})
+ 
+ target_link_libraries(mpifx PRIVATE MPI::MPI_Fortran)
