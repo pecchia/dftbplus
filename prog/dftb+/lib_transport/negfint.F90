@@ -1,6 +1,6 @@
 !--------------------------------------------------------------------------------------------------!
 !  DFTB+: general package for performing fast atomistic simulations                                !
-!  Copyright (C) 2006 - 2020  DFTB+ developers group                                               !
+!  Copyright (C) 2006 - 2022  DFTB+ developers group                                               !
 !                                                                                                  !
 !  See the LICENSE file for terms of usage and distribution.                                       !
 !--------------------------------------------------------------------------------------------------!
@@ -9,42 +9,36 @@
 
 !> Interface to LIBNEGF for DFTB+
 module dftbp_negfint
-  use dftbp_negfvars
-  use dftbp_negf, only : convertcurrent, eovh, getel, lnParams, pass_DM, Tnegf, units
-#:if WITH_MPI
-  use dftbp_negf, only : negf_mpi_init, negf_cart_init
-#:endif
-  use dftbp_negf, only : z_CSR, READ_SGF, COMP_SGF, COMPSAVE_SGF
-  use dftbp_negf, only : associate_lead_currents, associate_ldos, associate_transmission
-  use dftbp_negf, only : associate_current, compute_current, compute_density_dft, compute_ldos
-  use dftbp_negf, only : create, create_scratch, destroy, set_readoldDMsgf
-  use dftbp_negf, only : destroy_matrices, destroy_negf, get_params, init_contacts, init_ldos
-  use dftbp_negf, only : init_negf, init_structure, pass_hs, set_bp_dephasing
-  use dftbp_negf, only : set_drop, set_elph_block_dephasing, set_elph_dephasing
-  use dftbp_negf, only : set_elph_s_dephasing, set_ldos_indexes, set_params, set_scratch
-  use dftbp_negf, only : writememinfo, writepeakinfo, printcsr
-  use dftbp_accuracy
-  use dftbp_environment
-  use dftbp_constants
-  use dftbp_matconv
-  use dftbp_sparse2dense
-  use dftbp_densedescr
-  use dftbp_commontypes, only : TOrbitals
-  use dftbp_formatout
+  use dftbp_accuracy, only : dp, lc
+  use dftbp_constants, only : Hartree__eV, pi
+  use dftbp_environment, only : TEnvironment
   use dftbp_globalenv, only : stdOut, tIOproc
-  use dftbp_message
-  use dftbp_elecsolvertypes, only : electronicSolverTypes
-  use dftbp_linkedlist
   use dftbp_periodic, only : TNeighbourList, TNeighbourlist_init, updateNeighbourListAndSpecies
-  use dftbp_assert
-  use dftbp_eigensolver
+  use dftbp_sparse2dense, only : blockSymmetrizeHS, unpackHS
+  use dftbp_elecsolvertypes, only : electronicSolverTypes
+  use dftbp_negf, only : convertcurrent, eovh, getel, lnParams, pass_DM, Tnegf, units,&
+      & z_CSR, READ_SGF, COMP_SGF, COMPSAVE_SGF, associate_lead_currents, associate_ldos,&
+      & associate_transmission, associate_current, compute_current, compute_density_dft,&
+      & compute_ldos, create, create_scratch, destroy, set_readoldDMsgf, destroy_matrices,&
+      & destroy_negf, get_params, init_contacts, init_ldos, init_negf, init_structure, pass_hs,&
+      & set_bp_dephasing, set_drop, set_elph_block_dephasing, set_elph_dephasing,&
+      & set_elph_s_dephasing, set_ldos_indexes, set_params, set_scratch, writememinfo,&
+       writepeakinfo, printcsr
+  use dftbp_formatout, only : writeXYZFormat
+  use dftbp_message, only : error, warning
+  use dftbp_eigensolver, only : heev
+  use dftbp_matconv, only : init, destruct, foldToCSR, unfoldFromCSR
+  use dftbp_negfvars, only : TTranspar, TNEGFGreenDensInfo, TNEGFTunDos, ContactInfo,&
+      & TElph
+  use dftbp_commontypes, only : TOrbitals
+  use dftbp_densedescr, only : TDenseDescr
 #:if WITH_MPI
-  use dftbp_mpifx
+  use dftbp_mpifx, only : mpifx_comm, MPI_SUM, mpifx_reduceip, mpifx_allreduceip
+  use dftbp_negf, only : negf_mpi_init, negf_cart_init
 #:endif
   implicit none
 
   private
-
   public :: TNegfInt, TNegfInt_init, TNegfInt_final
 
 
@@ -94,7 +88,7 @@ contains
     !> Parameters for the Green's function calculation
     Type(TNEGFGreenDensInfo), intent(in) :: greendens
 
-    !> parameters for tuneling and density of states evaluation
+    !> Parameters for tuneling and density of states evaluation
     Type(TNEGFTunDos), intent(in) :: tundos
 
     !> Electronic temperature
@@ -120,7 +114,7 @@ contains
     ! Set defaults and fill up the parameter structure with them
     call init_negf(this%negf)
     call init_contacts(this%negf, ncont)
-    call set_scratch(this%negf, ".")
+    call set_scratch(this%negf, "./GS/")
 
     if (tIoProc .and. greendens%saveSGF ) then
       call create_scratch(this%negf)
@@ -295,7 +289,7 @@ contains
       end if
       write(stdOut,*) 'Contour Points: ', params%Np_n(1:2)
       write(stdOut,*) 'Number of poles: ', params%N_poles
-      write(stdOut,*) 'Real-axis points: ', params%Np_real(1)
+      write(stdOut,*) 'Real-axis points: ', params%Np_real
       if (params%readOldDM_SGFs==0) then
         write(stdOut,*) 'Read Existing SGFs: Yes '
       else
@@ -361,15 +355,6 @@ contains
       !this%negf%tNoGeometry = transpar%tNoGeometry
       this%negf%tOrthonormal = transpar%tOrthonormal
       this%negf%tOrthonormalDevice = transpar%tOrthonormalDevice
-      this%negf%NumStates = transpar%NumStates
-      this%negf%tManyBody = transpar%tManyBody
-      this%negf%tElastic = transpar%tElastic
-      this%negf%tZeroCurrent = transpar%tZeroCurrent
-      this%negf%MaxIter = transpar%MaxIter
-      this%negf%trans%out%tWriteDOS = transpar%tWriteDOS
-      this%negf%tWrite_ldos = transpar%tWrite_ldos
-      this%negf%tWrite_negf_params = transpar%tWrite_negf_params
-      this%negf%trans%out%tDOSwithS = transpar%tDOSwithS
       this%negf%cont(:)%name = transpar%contacts(:)%name
       this%negf%cont(:)%tWriteSelfEnergy = transpar%contacts(:)%tWriteSelfEnergy
       this%negf%cont(:)%tReadSelfEnergy = transpar%contacts(:)%tReadSelfEnergy
@@ -380,11 +365,6 @@ contains
     ! Defined outside transpar%defined ... HAS TO BE FIXED
     this%negf%tDephasingVE = transpar%tDephasingVE
     this%negf%tDephasingBP = transpar%tDephasingBP
-
-    if((.not. this%negf%tElastic).and.(.not. this%negf%tManyBody)) then
-      write(stdOut, *)'Current is not calculated!'
-      call error('Choose "Elastic = Yes" or "ManyBody = Yes"!')
-    end if
 
   end subroutine TNegfInt_init
 
@@ -787,7 +767,7 @@ contains
 
     call get_params(negf, params)
 
-    params%kpoint = nkpoint
+    params%ikpoint = nkpoint
     params%spin = spin
     params%DorE='N'
     nn=size(mu,1)
@@ -851,8 +831,8 @@ contains
     call get_params(negf, params)
 
     params%spin = spin
-    params%kpoint = kpoint
-    params%wght = wght
+    params%ikpoint = kpoint
+    params%kwght = wght
 
     call pass_HS(negf,HH,SS)
 
@@ -979,8 +959,8 @@ contains
     call get_params(negf, params)
 
     params%spin = spin
-    params%kpoint = kpoint
-    params%wght = wght
+    params%ikpoint = kpoint
+    params%kwght = wght
 
     call set_params(negf, params)
 

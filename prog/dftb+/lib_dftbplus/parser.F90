@@ -2875,6 +2875,8 @@ contains
       call getChildValue(node, "EwaldTolerance", ctrl%tolEwald, 1.0e-9_dp)
     end if
 
+    call getChildValue(node, "ConvergentSCCOnly", ctrl%isSccConvRequired, .true.)
+
   end subroutine readSccOptions
 
 

@@ -1,6 +1,6 @@
 !--------------------------------------------------------------------------------------------------!
 !  DFTB+: general package for performing fast atomistic simulations                                !
-!  Copyright (C) 2006 - 2020  DFTB+ developers group                                               !
+!  Copyright (C) 2006 - 2022  DFTB+ developers group                                               !
 !                                                                                                  !
 !  See the LICENSE file for terms of usage and distribution.                                       !
 !--------------------------------------------------------------------------------------------------!
@@ -10,20 +10,19 @@
 
 
 !> Contains routines for folding internal sparse matrixes into Compressed
-!> Sparse Row Format and vica-versa.
+!> Sparse Row Format and vice-versa.
 !>
 !> Caveat All folding and unfolding routines assume, that the CSR matrices have the same sparsity
 !> structure as the internal sparse matrices. The CSR matrices must be created using the
 !> createEquivCSR routines.
 module dftbp_matconv
-  use dftbp_assert
-  use dftbp_accuracy
+  use dftbp_accuracy, only : dp
   use dftbp_constants, only : pi
   use dftbp_commontypes, only : TOrbitals
   use libnegf, only: r_CSR, z_CSR, r_DNS, z_DNS, create, destroy
   implicit none
-  private
 
+  private
   public :: init,   destruct
   public :: foldToCSR, unfoldFromCSR
 
@@ -65,7 +64,7 @@ contains
   !> accordance with current geometry.
   !>
   !> Note: The subroutine only creates the structure of the CSR matrix, but
-  !> does not fill up the nonzero values with anything usefull.
+  !> does not fill up the nonzero values with anything useful.
   !> The resulting CSR matrix has storage for both triangles of the square matrix.
   subroutine createEquivCSR_real(csr, iAtomStart, iNeighbor, nNeighbor, img2CentCell, orb)
 
@@ -374,7 +373,7 @@ contains
   !> geometry.
   !>
   !> Note: The subroutine only creates the structure of the CSR matrix, but does not fill up the
-  !> nonzero values with anything usefull. The resulting CSR matrix has storage for both triangles
+  !> nonzero values with anything useful. The resulting CSR matrix has storage for both triangles
   !> of the square matrix.
   subroutine createEquivCSR_cplx(csr, iAtomStart, iNeighbor, nNeighbor, img2CentCell, orb)
 
