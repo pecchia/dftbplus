@@ -136,7 +136,7 @@ contains
     ! Set defaults and fill up the parameter structure with them
     call init_negf(this%negf)
     call init_contacts(this%negf, ncont)
-    call set_scratch(this%negf, ".")
+    call set_scratch(this%negf, "./GS/")
 
     if (tIoProc .and. greendens%saveSGF ) then
       call create_scratch(this%negf)
