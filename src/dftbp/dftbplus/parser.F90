@@ -6971,7 +6971,7 @@ contains
     call getChild(root, "ContactTemperature", pTmp, modifier=modifier, requested=.false.)
     if (associated(pTmp)) then
       call init(temperature)
-      call getChildValue(pTmp, "", temperature)
+      call getChildValue(pTmp, "", temperature, modifier=modifier)
       if (len(temperature) .ne. ncont) then
         call detailedError(root, "ContactTemperature does not match the number of contacts")
       end if
