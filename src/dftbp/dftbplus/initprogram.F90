@@ -4502,8 +4502,6 @@ contains
     end associate
 
     if (tNegf) then
-      write(stdOut,*) 'init negf'
-
       ! Some checks and initialization of GDFTB/NEGF
       call TNegfInt_init(negfInt, input%transpar, env, input%ginfo%greendens,&
           & input%ginfo%tundos, tempElec, kPoint, kWeight, localKS)

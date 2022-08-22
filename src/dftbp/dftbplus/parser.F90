@@ -6714,7 +6714,7 @@ contains
       call getChildValue(child2, "Eps0", elph%eps_r, default=1.0_dp)
       call getChildValue(child2, "ScreeningLength", tmp, 10.0_dp, modifier=modifier,&
           & child=field)
-      call convertByMul(char(modifier), lengthUnits, field, tmp)
+      call convertUnitHsd(char(modifier), lengthUnits, field, tmp)
       elph%q0 = 1.0_dp/tmp
     case ("nonpolaroptical")
       elph%model = interaction_models%nonpolaroptical
@@ -6722,7 +6722,7 @@ contains
       call read_common_part(child2)
       call getChildValue(child2, "DeformationPotential", elph%D0, 0.0_dp, modifier=modifier,&
             & child=field)
-      call convertByMul(char(modifier), energyUnits, field, elph%D0)
+      call convertUnitHsd(char(modifier), energyUnits, field, elph%D0)
     case default
       call detailedError(child,"unkown inelastic phonon type: "//char(phonontype))
     end select
@@ -6742,7 +6742,7 @@ contains
       if (tmp == 0.0_dp) then
          call detailedError(node, "PhononFrequency must be defined > 0.0")
       end if      
-      call convertByMul(char(modifier), energyUnits, field, tmp)
+      call convertUnitHsd(char(modifier), energyUnits, field, tmp)
       elph%wq = tmp
       call getChildValue(node, "Umklapp", elph%tUmklapp, .false.)
       call getChildValue(node, "KSymmetry", elph%tKSymmetry, .true.)
@@ -6916,7 +6916,7 @@ contains
 
     case (textNodeName)
       call getChildValue(node, "Coupling", rTmp, child=field, modifier=modifier)
-      call convertByMul(char(modifier), energyUnits, field, rTmp)
+      call convertUnitHsd(char(modifier), energyUnits, field, rTmp)
       elph%coupling = rTmp
 
     case ("constant")
@@ -6959,12 +6959,10 @@ contains
 
     call getChildValue(root, "Delta", tundos%delta, &
         &1.0e-5_dp, modifier=modifier, child=field)
-    call convertByMul(char(modifier), energyUnits, field, &
-        &tundos%delta)
+    call convertUnitHsd(char(modifier), energyUnits, field, tundos%delta)
     call getChildValue(root, "BroadeningDelta", tundos%broadeningDelta, &
         &0.0_dp, modifier=modifier, child=field)
-    call convertByMul(char(modifier), energyUnits, field, &
-        &tundos%broadeningDelta)
+    call convertUnitHsd(char(modifier), energyUnits, field, tundos%broadeningDelta)
     ! Read Temperature. Can override contact definition
     allocate(tundos%kbT(ncont))
 

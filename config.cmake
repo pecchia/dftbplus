@@ -22,6 +22,7 @@ option(WITH_ELSI "Whether DFTB+ with MPI-parallelism should use the ELSI librari
 # enabled (and must have been built with GPU support).
 
 option(WITH_TRANSPORT "Whether transport via libNEGF should be included." FALSE)
+option(WITH_TRANSPORT_GPU "Whether libNEGF should enable  GPU." FALSE)
 # Works only when building static libraries (see option BUILD_SHARED_LIBS)
 
 option(WITH_POISSON "Whether the Poisson-solver should be included" ${WITH_TRANSPORT})
