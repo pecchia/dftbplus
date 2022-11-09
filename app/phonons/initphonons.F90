@@ -327,9 +327,8 @@ contains
       call readDftbHessian(value)
     case ("dynmatrix")
       call readDynMatrix(value)
-    !case ("cp2k")
-    !  commented out because subroutine contains clear bugs 
-    !  call readCp2kHessian(value)
+    case ("cp2k")
+      call readCp2kHessian(value)
     case default
       call detailedError(node,"Unknown Hessian type "//char(buffer))
     end select
@@ -1056,63 +1055,60 @@ contains
 
   end subroutine readDynMatrix
 
-  ! ALEX: Commented out because buggy and not reading binary Hessian from CP2K
-  !subroutine readCp2kHessian(child)
-  !  type(fnode), pointer :: child
-  !
-  !  type(TListRealR1) :: realBuffer
-  !  integer :: iCount, jCount, ii, kk, jj, ll
-  !  integer :: nDerivs, nBlocks, nLeft
-  !
-  !  real, dimension(:,:), allocatable :: HessCp2k
-  !  integer ::  n, j1, j2,  p,  q, fu
-  !  type(string) :: filename
-  !  logical :: texist
-
-  !  nDerivs = 3 * nMovedAtom
-  !  allocate(dynMatrix(nDerivs,nDerivs))
-  !
-  !  call getChildValue(child, "Filename", filename, "hessian.cp2k")
-  !  inquire(file=trim(char(filename)), exist=texist )
-  !  if (texist) then
-  !    write(stdOut, "(/, A)") "read cp2k binary Hessian '"//trim(char(filename))//"'..."
-  !  else
-  !    call detailedError(child,"Hessian file "//trim(char(filename))//" does not exist")
-  !  end if
-
-  !  !The derivatives matrix must be stored as the following order:
-  !
-  !  ! For the x y z directions of atoms 1..n
-  !  !   d^2 E        d^2 E       d^2 E       d^2 E        d^2 E
-  !  ! ---------- + --------- + --------- + ---------- + ---------- +...
-  !  ! dx_1 dx_1    dy_1 dx_1   dz_1 dx_1   dx_2 dx_1    dy_2 dx_1
-
-  !  open(newunit=fu, file=trim(char(filename)), action='read', form='unformatted')
-        
-  ! ! do jj = 1,  nDerivs
-  !     read(fu) dynMatrix(:,jj)
-  ! ! end do
-
-  ! ! mass weight the Hessian matrix to get the dynamical matrix
-  ! iCount = 0
-  ! do ii = 1, nMovedAtom
-  !   do kk = 1, 3
-  !     iCount = iCount + 1
-  !     jCount = 0
-  !     do jj = 1, nMovedAtom
-  !       do ll = 1, 3
-  !         jCount = jCount + 1
-  !         dynMatrix(jCount,iCount) = dynMatrix(jCount,iCount) &
-  !             & / (sqrt(atomicMasses(ii)) * sqrt(atomicMasses(jj)))
-  !       end do
-  !     end do
-  !   end do
-  ! end do
+  subroutine readCp2kHessian(child)
+    type(fnode), pointer :: child
   
-   
-  ! close(fu)
-  ! 
-  ! end subroutine readCp2kHessian
+    type(TListRealR1) :: realBuffer
+    integer :: iCount, jCount, ii, kk, jj, ll
+    integer :: nDerivs, nBlocks, nLeft
+  
+    !real, dimension(:,:), allocatable :: HessCp2k
+    !integer ::  n, j1, j2,  p,  q, fu
+    type(string) :: filename
+    logical :: texist
+
+    nDerivs = 3 * nMovedAtom
+    allocate(dynMatrix(nDerivs,nDerivs))
+  
+    call getChildValue(child, "Filename", filename, "hessian.cp2k")
+    inquire(file=trim(char(filename)), exist=texist )
+    if (texist) then
+      write(stdOut, "(/, A)") "read cp2k binary Hessian '"//trim(char(filename))//"'..."
+    else
+      call detailedError(child,"Hessian file "//trim(char(filename))//" does not exist")
+    end if
+    !The derivatives matrix must be stored as the following order:
+  
+    ! For the x y z directions of atoms 1..n
+    !   d^2 E        d^2 E       d^2 E       d^2 E        d^2 E
+    ! ---------- + --------- + --------- + ---------- + ---------- +...
+    ! dx_1 dx_1    dy_1 dx_1   dz_1 dx_1   dx_2 dx_1    dy_2 dx_1
+
+    open(newunit=fu, file=trim(char(filename)), action='read', form='unformatted')
+        
+    do jj = 1,  nDerivs
+       read(fu) dynMatrix(:,jj)
+    end do
+
+    ! mass weight the Hessian matrix to get the dynamical matrix
+    iCount = 0
+    do ii = 1, nMovedAtom
+      do kk = 1, 3
+        iCount = iCount + 1
+        jCount = 0
+        do jj = 1, nMovedAtom
+          do ll = 1, 3
+            jCount = jCount + 1
+            dynMatrix(jCount,iCount) = dynMatrix(jCount,iCount) &
+                & / (sqrt(atomicMasses(ii)) * sqrt(atomicMasses(jj)))
+          end do
+        end do
+      end do
+    end do
+    
+    close(fu)
+    
+  end subroutine readCp2kHessian
 
   ! Subroutine removing entries in the Dynamical Matrix.
   ! Not used because identified as a wrong way
