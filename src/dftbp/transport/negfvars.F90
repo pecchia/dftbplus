@@ -8,7 +8,7 @@
 module dftbp_transport_negfvars
   use dftbp_common_accuracy, only : dp, mc, lc
   use dftbp_type_wrappedintr, only : TWrappedInt1
-  use dftbp_extlibs_negf, only : interaction_models 
+  use dftbp_extlibs_negf, only : interaction_models, integration_type
   implicit none
 
   private
@@ -27,6 +27,11 @@ module dftbp_transport_negfvars
   !> nonpolaroptical (inelastic nonpolar-optical coupling model)
   !> acousticinel    (acoustic inelastic deformation potential model)
   !> matrixcoupling  (inelastic with full matrix dH/dQ coupling form)
+  public :: integration_type
+  !> Available integrations for current:
+  !> Trapezoidal (default)
+  !> Simpson 1/3
+  !> Simpson 3/8
 
 
   !> Options for electron-phonon model
@@ -188,6 +193,9 @@ module dftbp_transport_negfvars
 
     !> Buttiker Probe for dephasing
     type(Telph), allocatable :: bp
+
+    !> Specify which integration type for current
+    integer :: integration = integration_type%trapezoidal
 
   end type TNEGFTunDos
 

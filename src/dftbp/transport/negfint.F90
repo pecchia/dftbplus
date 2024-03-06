@@ -19,10 +19,10 @@ module dftbp_transport_negfint
   use dftbp_extlibs_negf, only : convertcurrent, eovh, getel, lnParams, pass_DM, Tnegf, units,&
       & z_CSR, READ_SGF, COMP_SGF, COMPSAVE_SGF, associate_lead_currents, associate_ldos,&
       & associate_transmission, associate_current, compute_current, compute_density_dft,&
-      & compute_ldos, create, create_scratch, destroy, set_readoldDMsgf, create_hs, &
+      & compute_ldos, create, create_scratch, destroy, set_readoldDMsgf, create_hs, copy_hs,&
       & destroy_negf, get_params, init_contacts, init_ldos, init_negf, init_structure, pass_hs,&
       & set_bp_dephasing, set_drop, set_elph_block_dephasing, set_elph_dephasing, destroy_hs,&
-      & set_elph_s_dephasing, set_ldos_indexes, set_params, set_scratch, writememinfo,&
+      & set_elph_s_dephasing, set_ldos_indexes, set_params, set_scratch, writememinfo, create_dm,&
       & writepeakinfo, printcsr, set_elph_polaroptical, set_elph_nonpolaroptical, set_kpoints, &
       & init_basis, compute_layer_current, compute_meir_wingreen, set_scba_tolerances
   use dftbp_io_formatout, only : writeXYZFormat
@@ -43,6 +43,9 @@ module dftbp_transport_negfint
 
   public :: TNegfInt, TNegfInt_init, TNegfInt_final
 
+  type TMatrixArray
+    type(z_CSR), pointer :: Mat
+  end type TMatrixArray
 
   !> Contains data needed by the NEGF interface
   type :: TNegfInt
@@ -60,10 +63,10 @@ module dftbp_transport_negfint
     !> whether the calculation has inelastic scattering
     logical :: tInelastic = .false.
 
-    !> whether layer currents should be computed 
+    !> whether layer currents should be computed
     logical :: tLayerCurrents = .false.
 
-    !> whether layer currents should be computed 
+    !> whether layer currents should be computed
     logical :: tMeirWingreen = .false.
 
   contains
@@ -106,10 +109,10 @@ contains
     !> Electronic temperature
     real(dp), intent(in) :: tempElec
 
-    !> k-points
+    !> k-points (global array)
     real(dp), intent(in) :: kPoint(:,:)
 
-    !> Weights for k-points
+    !> Weights for k-points (global array)
     real(dp), intent(in) :: kWeight(:)
 
     !> local indices of kpoints and spin
@@ -386,18 +389,20 @@ contains
       this%negf%cont(:)%tWriteSurfaceGF = transpar%contacts(:)%tWriteSurfaceGF
       this%negf%cont(:)%tReadSurfaceGF = transpar%contacts(:)%tReadSurfaceGF
     end if
-    
+
     call this%setup_kpoints(kPoint, kWeight, localKS(1,:))
-  
+
     if (tundos%defined) then
-      this%tLayerCurrents = tundos%layerCurrent      
-      this%tMeirWingreen = tundos%meirWingreen     
+      this%tLayerCurrents = tundos%layerCurrent
+      this%tMeirWingreen = tundos%meirWingreen
     end if
+
+    this%negf%integration = tundos%integration
 
   end subroutine TNegfInt_init
 
 
-  !> geometry-dependent initializations 
+  !> geometry-dependent initializations
   subroutine setup_structure(this, denseDescr, transpar, greendens, tundos, coords, &
       & latVec, neighbourList, nNeighbourSK, img2CentCell, orb)
 
@@ -440,8 +445,8 @@ contains
 
     call this%setup_str(denseDescr, transpar, greendens, coords, latVec, &
         & neighbourList%iNeighbour, nNeighbourSK, img2CentCell)
-    
-    call this%setup_dephasing(tundos) 
+
+    call this%setup_dephasing(tundos)
 
   end subroutine setup_structure
 
@@ -487,7 +492,7 @@ contains
 
     kbT = 0.0_dp
     do ii = 1, size(negf%cont)
-      kbT = kbT + negf%cont(ii)%kbT_t  
+      kbT = kbT + negf%cont(ii)%kbT_t
     end do
     kbT = kbT/size(negf%cont)
     cell_area = 1.0_dp
@@ -502,29 +507,29 @@ contains
       case(interaction_models%dephdiagonal)
         write(stdOut,*) 'Setting local fully diagonal (FD) elastic dephasing model'
         call set_elph_dephasing(negf, elph(ii)%coupling, elph(ii)%scba_niter)
-        if ( elph(ii)%scba_tol < elastic_tol ) elastic_tol = elph(ii)%scba_tol 
+        if ( elph(ii)%scba_tol < elastic_tol ) elastic_tol = elph(ii)%scba_tol
       case(interaction_models%dephatomblock)
         write(stdOut,*) 'Setting local block diagonal (BD) elastic dephasing model'
         call set_elph_block_dephasing(negf, elph(ii)%coupling, elph(ii)%orbsperatm, &
              & elph(ii)%scba_niter)
-        if ( elph(ii)%scba_tol < elastic_tol ) elastic_tol = elph(ii)%scba_tol 
+        if ( elph(ii)%scba_tol < elastic_tol ) elastic_tol = elph(ii)%scba_tol
       case(interaction_models%dephoverlap)
         write(stdOut,*) 'Setting overlap mask (OM) block diagonal elastic dephasing model'
         call set_elph_s_dephasing(negf, elph(ii)%coupling, elph(ii)%orbsperatm, &
              & elph(ii)%scba_niter)
-        if ( elph(ii)%scba_tol < elastic_tol ) elastic_tol = elph(ii)%scba_tol 
+        if ( elph(ii)%scba_tol < elastic_tol ) elastic_tol = elph(ii)%scba_tol
       case(interaction_models%polaroptical)
         write(stdOut,*) 'Setting polar-optical inelastic scattering model'
         call set_elph_polaroptical(negf, elph(ii)%coupling, elph(ii)%wq, kbT, &
              & deltaz, elph(ii)%eps_r, elph(ii)%eps_inf, elph(ii)%q0, &
              & cell_area, elph(ii)%scba_niter, elph(ii)%tTridiagonal)
-        if ( elph(ii)%scba_tol < inelastic_tol ) inelastic_tol = elph(ii)%scba_tol 
+        if ( elph(ii)%scba_tol < inelastic_tol ) inelastic_tol = elph(ii)%scba_tol
         if (.not.inelastic) inelastic = .true.
       case(interaction_models%nonpolaroptical)
         write(stdOut,*) 'Setting non polar-optical inelastic scattering model'
         call set_elph_nonpolaroptical(negf, elph(ii)%coupling, elph(ii)%wq, kbT, &
              & deltaz, elph(ii)%D0, cell_area, elph(ii)%scba_niter, elph(ii)%tTridiagonal)
-        if ( elph(ii)%scba_tol < inelastic_tol ) inelastic_tol = elph(ii)%scba_tol 
+        if ( elph(ii)%scba_tol < inelastic_tol ) inelastic_tol = elph(ii)%scba_tol
         if (.not.inelastic) inelastic = .true.
       case default
         call error("Electron-phonon model is not supported ")
@@ -775,9 +780,9 @@ contains
     call init_structure(this%negf, ncont, surf_start, surf_end, cont_end, nbl, PL_end, cblk)
 
     if (size(latVec) > 0) then
-      call init_basis(this%negf, coords, iatm2, densedescr%iatomstart, latVec)  
-    else  
-      call init_basis(this%negf, coords, iatm2, densedescr%iatomstart)  
+      call init_basis(this%negf, coords, iatm2, densedescr%iatomstart, latVec)
+    else
+      call init_basis(this%negf, coords, iatm2, densedescr%iatomstart)
     end if
     !call this%negf%str%print_Tstruct(stdOut)
 
@@ -787,16 +792,16 @@ contains
   subroutine setup_kpoints(this, kpoints, kweights, local_kindex)
     !> Instance.
     class(TNegfInt), intent(inout) :: this
-    
+
     !> global array of kpoints
     real(dp), intent(in) :: kpoints(:,:)
-    
-    !> global array of weights 
+
+    !> global array of weights
     real(dp), intent(in) :: kweights(:)
-    
+
     !> index of kpoints in the array (maps local to global)
     integer, intent(in) :: local_kindex(:)
-  
+
     call set_kpoints(this%negf, kpoints, kweights, local_kindex, kSamplingType=1)
 
   end subroutine setup_kpoints
@@ -883,13 +888,10 @@ contains
 
 
   !> Interface subroutine to call density matrix computation
-  subroutine negf_density(negf, miter,spin,nkpoint,HH,SS,mu,DensMat,EnMat)
+  subroutine negf_density(negf,spin,nkpoint,HH,SS,mu,DensMat,EnMat)
 
     !> NEGF container
     type(TNegf), intent(inout) :: negf
-
-    !> SCC step (used in SGF)
-    integer, intent (in) :: miter
 
     !> spin component (SGF)
     integer, intent (in) :: spin
@@ -942,15 +944,46 @@ contains
     if (params%DorE.eq.'N') then
       return
     end if
-
     call create_HS(negf, 1)
 
     call pass_HS(negf,HH,SS)
 
     call compute_density_dft(negf)
 
+    call destroy_HS(negf)
+
   end subroutine negf_density
 
+  !> Density matrix with inelastic scattering
+  subroutine  negf_density_inel(negf, DensMat, EnMat)
+
+    !> NEGF container
+    type(TNegf), intent(inout) :: negf
+
+    !> Density matrix
+    type(z_CSR), pointer, intent(in), optional :: DensMat
+
+    !> Energy weighted DM
+    type(z_CSR), pointer, intent(in), optional :: EnMat
+
+
+    type(lnParams) :: params
+
+    call get_params(negf, params)
+    if(present(DensMat)) then
+       params%DorE = 'D'
+       call set_params(negf,params)
+       call pass_DM(negf,rho=DensMat)
+    endif
+    if(present(EnMat)) then
+       params%DorE = 'E'
+       call set_params(negf,params)
+       call pass_DM(negf,rhoE=EnMat)
+    endif
+
+    call compute_density_dft(negf)
+
+  end subroutine negf_density_inel
 
   !> Interface subroutine to call ldos computation
   subroutine negf_ldos(negf, HH, SS, spin, kpoint, wght, ledos)
@@ -983,7 +1016,7 @@ contains
     params%spin = spin
     params%ikpoint = kpoint
     params%kwght = wght
-    
+
     call create_HS(negf, 1)
 
     call pass_HS(negf,HH,SS)
@@ -1113,7 +1146,7 @@ contains
     params%kwght = wght
 
     call set_params(negf, params)
-    
+
     call create_HS(negf, 1)
 
     call pass_HS(negf,HH,SS)
@@ -1141,7 +1174,7 @@ contains
     !> NEGF container
     type(TNegf), intent(inout), target :: negf
 
-    !> logical flag for layer-currents or Meir-Wingreen 
+    !> logical flag for layer-currents or Meir-Wingreen
     logical, intent(in) :: lc_or_mw
 
     !> current magnitudes
@@ -1152,10 +1185,10 @@ contains
 
     !> current directions
     real(dp), dimension(:), pointer :: currents
-    
+
     type(TNegf), pointer :: pNegf
-   
-    if (lc_or_mw) then 
+
+    if (lc_or_mw) then
       call compute_layer_current(negf)
     else
       call compute_meir_wingreen(negf)
@@ -1165,7 +1198,7 @@ contains
 
     call associate_current(pNegf, curr)
     call associate_ldos(pNegf, ledos)
-    
+
     call associate_lead_currents(pNegf, currents)
     if (.not.associated(currents)) then
       call error('Internal error: currVec not associated')
@@ -1244,9 +1277,9 @@ contains
     !> Electron entropy
     real(dp), intent(out) :: TS(:)
 
-    integer :: nSpin, nKS, iK, iS, iKS
-    type(z_CSR), target :: csrDens
+    integer :: ncont, nSpin, nKS, iK, iS, iKS
     type(z_CSR), pointer :: pCsrHam, pCsrOver
+    type(lnParams) :: params
 
     ! Workaround: intel18
     ! Explicit pointer needed instead of using this%* directly as pointer argument in calls
@@ -1264,66 +1297,157 @@ contains
     endif
     ! We need this now for different fermi levels in colinear spin
     ! Note: the spin polirized does not work with
-    ! built-int potentials (the unpolarized does) in the poisson
+    ! built-in potentials (the unpolarized does) in the poisson
     nKS = size(groupKS, dim=2)
     nSpin = size(ham, dim=2)
     rho = 0.0_dp
-
-    write(stdOut, *)
-    write(stdOut, '(80("="))')
-    write(stdOut, *) '                         COMPUTING DENSITY MATRIX      '
-    write(stdOut, '(80("="))')
-
-    do iKS = 1, nKS
-      iK = groupKS(1, iKS)
-      iS = groupKS(2, iKS)
-
-    #:if WITH_MPI
-      if (env%mpi%nGroup == 1) then
-        write(stdOut,*) 'k-point',iK,'Spin',iS
-      end if
-    #:else
-      write(stdOut,*) 'k-point',iK,'Spin',iS
-    #:endif
-
-      call foldToCSR(this%csrHam, ham(:,iS), kPoints(:,iK), iAtomStart, iPair, iNeighbor,&
-          & nNeighbor, img2CentCell, iCellVec, cellVec, orb)
-      call foldToCSR(this%csrOver, over, kPoints(:,ik), iAtomStart, iPair, iNeighbor, nNeighbor,&
-          & img2CentCell, iCellVec, cellVec, orb)
-
-      call negf_density(this%negf, iSCCIter, iS, iK, pCsrHam, pCsrOver, mu(:,iS),&
-          & DensMat=csrDens)
-
-      ! NOTE:
-      ! unfold adds up to rho the csrDens(k) contribution
-      call unfoldFromCSR(rho(:,iS), csrDens, kPoints(:,iK), kWeights(iK), iAtomStart, iPair,&
-          & iNeighbor, nNeighbor, img2CentCell, iCellVec, cellVec, orb)
-
-      call destruct(csrDens)
-
-      ! Set some fake energies:
-      Eband(iS) = 0.0_dp
-      Ef(iS) = mu(1,iS)
-      TS(iS) = 0.0_dp
-      E0(iS) = 0.0_dp
-
-    end do
+    ncont = size(mu,1)
 
 #:if WITH_MPI
-    do iS = 1, nSpin
-      ! In place all-reduce of the density matrix
-      call mpifx_allreduceip(env%mpi%groupComm, rho(:,iS), MPI_SUM)
-    end do
-    call mpifx_allreduceip(env%mpi%interGroupComm, rho, MPI_SUM)
+    call mpifx_barrier(env%mpi%groupComm)
+    call mpifx_barrier(env%mpi%interGroupComm)
 #:endif
+
+    if (this%tInelastic) then
+      call calc_density_inel()
+    else
+      call calc_density_ela()
+    end if
 
     ! Now SGFs can be read unless not stored
     if (this%negf%readOldDM_SGFs.ne.COMP_SGF) then
       call set_readOldDMsgf(this%negf, READ_SGF)  ! read from files
     end if
 
-    write(stdOut,'(80("="))')
-    write(stdOut,*)
+    ! ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    contains
+
+    subroutine calc_density_ela()
+
+      type(z_CSR), target :: csrDens
+      type(z_CSR), pointer :: pCsrDens
+
+      call get_params(this%negf, params)
+      if (sum(params%Np_n) + params%n_poles + params%Np_real == 0) then
+        return
+      end if
+
+      write(stdOut, *)
+      write(stdOut, '(80("="))')
+      write(stdOut, *) '                         COMPUTING DENSITY MATRIX      '
+      write(stdOut, '(80("="))')
+
+      pCsrDens => CsrDens
+
+      do iKS = 1, nKS
+        iK = groupKS(1, iKS)
+        iS = groupKS(2, iKS)
+
+        params%mu(1:ncont) = mu(1:ncont,iS)
+        call set_params(this%negf, params)
+
+      #:if WITH_MPI
+        if (env%mpi%nGroup == 1) then
+          write(stdOut,*) 'k-point',iK,'Spin',iS
+        end if
+      #:else
+        write(stdOut,*) 'k-point',iK,'Spin',iS
+      #:endif
+
+        call foldToCSR(this%csrHam, ham(:,iS), kPoints(:,iK), iAtomStart, iPair, iNeighbor,&
+            & nNeighbor, img2CentCell, iCellVec, cellVec, orb)
+        call foldToCSR(this%csrOver, over, kPoints(:,ik), iAtomStart, iPair, iNeighbor, nNeighbor,&
+            & img2CentCell, iCellVec, cellVec, orb)
+
+        call negf_density(this%negf, iS, iK, pCsrHam, pCsrOver, mu(:,iS), DensMat=pCsrDens)
+
+        ! NOTE: unfold adds up to rho the csrDens(k) contribution
+        call unfoldFromCSR(rho(:,iS), csrDens, kPoints(:,iK), kWeights(iK), iAtomStart, iPair,&
+            & iNeighbor, nNeighbor, img2CentCell, iCellVec, cellVec, orb)
+
+        call destruct(csrDens)
+
+        ! Set some fake energies:
+        Eband(iS) = 0.0_dp
+        Ef(iS) = mu(1,iS)
+        TS(iS) = 0.0_dp
+        E0(iS) = 0.0_dp
+
+      end do
+
+     #:if WITH_MPI
+      do iS = 1, nSpin
+        ! In place all-reduce of the density matrix
+        call mpifx_allreduceip(env%mpi%groupComm, rho(:,iS), MPI_SUM)
+      end do
+      call mpifx_allreduceip(env%mpi%interGroupComm, rho, MPI_SUM)
+     #:endif
+
+      write(stdOut,'(80("="))')
+      write(stdOut,*)
+
+    end subroutine calc_density_ela
+    ! ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    subroutine calc_density_inel()
+
+      type(z_CSR), target :: csrDens
+      type(z_CSR), pointer :: pCsrDens
+
+      if (nSpin == 2) then
+        call error('Collinear spin not supported with inelastic scattering yet')
+      end if
+
+      call get_params(this%negf, params)
+      if (params%Np_real == 0) then
+        return
+      end if
+
+      pCsrDens => csrDens
+
+      write(stdOut, *)
+      write(stdOut, '(80("="))')
+      write(stdOut, *) '                     COMPUTING DENSITY MATRIX (inelastic) '
+      write(stdOut, '(80("="))')
+
+      params%DorE = 'D'
+      params%mu(1:ncont) = mu(1:ncont,1)
+      call set_params(this%negf, params)
+      ! Container for H(k) and S(k)
+      call destroy_HS(this%negf)
+      call create_HS(this%negf, nKS)
+      ! Pass all local H(k) and S(k) beforehand
+      do iKS = 1, nKS
+        iK = groupKS(1, iKS)
+        iS = groupKS(2, iKS)
+
+        call foldToCSR(this%csrHam, ham(:,iS), kPoints(:,iK), iAtomStart, iPair, iNeighbor,&
+              & nNeighbor, img2CentCell, iCellVec, cellVec, orb)
+
+        call foldToCSR(this%csrOver, over, kPoints(:,ik), iAtomStart, iPair, iNeighbor, nNeighbor,&
+              & img2CentCell, iCellVec, cellVec, orb)
+
+        call copy_HS(this%negf, this%csrHam, this%csrOver, iKS)
+      end do
+
+      call pass_DM(this%negf,rho=pCsrDens)
+
+      call compute_density_dft(this%negf)
+
+      call unfoldFromCSR(rho(:,1), csrDens, kPoints(:,iK), kWeights(iK), iAtomStart, &
+            & iPair, iNeighbor, nNeighbor, img2CentCell, iCellVec, cellVec, orb)
+
+      call destroy(csrDens)
+
+      write(stdOut,'(80("="))')
+      write(stdOut,*)
+
+      ! Set some fake energies:
+      Eband(:) = 0.0_dp
+      Ef(:) = mu(1,:)
+      TS(:) = 0.0_dp
+      E0(:) = 0.0_dp
+
+    end subroutine calc_density_inel
 
   end subroutine calcdensity_green
 
@@ -1433,11 +1557,9 @@ contains
       call foldToCSR(this%csrOver, over, kPoints(:,ik), iAtomStart, iPair, iNeighbor, nNeighbor,&
           & img2CentCell, iCellVec, cellVec, orb)
 
-      call negf_density(this%negf, iSCCIter, iS, iK, pCsrHam, pCsrOver, mu(:,iS), EnMat=pCsrEDens)
+      call negf_density(this%negf, iS, iK, pCsrHam, pCsrOver, mu(:,iS), EnMat=pCsrEDens)
 
-      ! NOTE:
-      ! unfold adds up to rhoEPrim the csrEDens(k) contribution
-      !
+      ! NOTE: unfold adds up to rhoEPrim the csrEDens(k) contribution
       call unfoldFromCSR(rhoE, csrEDens, kPoints(:,iK), kWeights(iK), iAtomStart, iPair, iNeighbor,&
           & nNeighbor, img2CentCell, iCellVec, cellVec, orb)
 
@@ -1578,7 +1700,7 @@ contains
 
     if (this%tInelastic .or. this%tLayerCurrents .or. this%tMeirWingreen) then
       call calc_current_inel()
-    else  
+    else
       call calc_current_ela()
     end if
 
@@ -1636,28 +1758,28 @@ contains
         write(stdOut, '(80("="))')
         write(stdOut, *)
       end if
- 
+
       call get_params(this%negf, params)
 
       do iKS = 1, nKS
         iK = groupKS(1, iKS)
         iS = groupKS(2, iKS)
- 
+
         write(stdOut,*) 'Spin',iS,'k-point',iK,'k-weight',kWeights(iK)
- 
+
         params%mu(1:ncont) = mu(1:ncont,iS)
- 
+
         call set_params(this%negf, params)
- 
+
         call foldToCSR(this%csrHam, ham(:,iS), kPoints(:,iK), iAtomStart, iPair, iNeighbor,&
               & nNeighbor, img2CentCell, iCellVec, cellVec, orb)
- 
+
         call foldToCSR(this%csrOver, over, kPoints(:,ik), iAtomStart, iPair, iNeighbor, nNeighbor,&
               & img2CentCell, iCellVec, cellVec, orb)
- 
+
         call negf_current(this%negf, pCsrHam, pCsrOver, iS, iK, kWeights(iK), tunnPMat, currPMat,&
             & ldosPMat, currPVec)
- 
+
         if(.not.allocated(currLead)) then
           allocate(currLead(size(currPVec)), stat=err)
           if (err /= 0) then
@@ -1666,7 +1788,7 @@ contains
           currLead(:) = 0.0_dp
         endif
         currLead(:) = currLead + currPVec
- 
+
         !GUIDE: tunnPMat libNEGF output stores Transmission, T(iE, i->j)
         !       tunnPMat is MPI distributed on energy points (0.0 on other nodes)
         !       tunnMat MPI gather partial results and accumulate k-summation
@@ -1696,22 +1818,24 @@ contains
 
       ! converts from internal atomic units into amperes
       currLead(:) = currLead * convertCurrent(unitsOfEnergy, unitsOfCurrent)
- 
+
       do ii = 1, size(currLead)
         write(stdOut, *)
         write(stdOut, '(1x,a,i3,i3,a,ES14.5,a,a)') ' contacts: ',params%ni(ii),params%nf(ii),&
             & ' current: ', currLead(ii),' ',unitsOfCurrent%name
       enddo
-    
-    end subroutine calc_current_ela   
+
+    end subroutine calc_current_ela
     ! ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     subroutine calc_current_inel()
 
       if (nS == 2) then
-        call error('Collinear spin not supported with inelastic scattering yet')   
-      end if 
+        call error('Collinear spin not supported with inelastic scattering yet')
+      end if
+      if (.not. this%tLayerCurrents .and. .not. this%tMeirWingreen) then
+        call error('Internal error: no adequate inelastic method for currents.')
+      end if
 
-      call get_params(this%negf, params)
       if (params%verbose.gt.30) then
         write(stdOut, *)
         write(stdOut, '(80("="))')
@@ -1719,31 +1843,27 @@ contains
         write(stdOut, '(80("="))')
         write(stdOut, *)
       end if
- 
+
+      call get_params(this%negf, params)
       params%mu(1:ncont) = mu(1:ncont,1)
       call set_params(this%negf, params)
       call destroy_HS(this%negf)
       call create_HS(this%negf, nKS)
-      
+
       do iKS = 1, nKS
         iK = groupKS(1, iKS)
         iS = groupKS(2, iKS)
 
         call foldToCSR(this%csrHam, ham(:,iS), kPoints(:,iK), iAtomStart, iPair, iNeighbor,&
               & nNeighbor, img2CentCell, iCellVec, cellVec, orb)
- 
+
         call foldToCSR(this%csrOver, over, kPoints(:,ik), iAtomStart, iPair, iNeighbor, nNeighbor,&
               & img2CentCell, iCellVec, cellVec, orb)
-        call pass_HS(this%negf, pCsrHam, pCsrOver, iKS)
-      end do   
-      
-      if (this%tLayerCurrents) then
-        call negf_current_inel(this%negf, .true., currPMat, ldosPMat, currPVec)
-      else if (this%tMeirWingreen) then
-        call negf_current_inel(this%negf, .false., currPMat, ldosPMat, currPVec)
-      else
-        call error('Internal error: no adequate inelastic method for currents.')     
-      end if
+
+        call copy_HS(this%negf, this%csrHam, this%csrOver, iKS)
+      end do
+
+      call negf_current_inel(this%negf, this%tLayerCurrents, currPMat, ldosPMat, currPVec)
 
       if (.not.allocated(currLead)) then
         allocate(currLead(size(currPVec)), stat=err)
@@ -1755,22 +1875,23 @@ contains
       currLead(:) = currPVec
       ! converts from internal atomic units into amperes
       currLead(:) = currLead * convertCurrent(unitsOfEnergy, unitsOfCurrent)
- 
-      if (.not.allocated(ldosMat)) then
-        allocate(ldosMat(size(ldosPMat,1),size(ldosPMat,2)), stat=err)
-        if (err /= 0) then
-          call error('Allocation error (ldosMat)')
-        end if
-        ldosMat = 0.0_dp
-      end if
-      ldosMat = ldosPMat
+
+      ! Note: ldos might not be computed and associated hence code crash here
+      !if (.not.allocated(ldosMat)) then
+      !  allocate(ldosMat(size(ldosPMat,1),size(ldosPMat,2)), stat=err)
+      !  if (err /= 0) then
+      !    call error('Allocation error (ldosMat)')
+      !  end if
+      !  ldosMat = 0.0_dp
+      !end if
+      !ldosMat = ldosPMat
 
       do ii = 1, size(currLead)
         write(stdOut, *)
         if (this%tLayerCurrents) then
           write(stdOut, '(1x,a,i3,i3,a,ES14.5,a,a)') ' Layer: ',params%ni(ii),params%nf(ii),&
                 & ' current: ', currLead(ii),' ',unitsOfCurrent%name
-        else if (this%tMeirWingreen) then  
+        else if (this%tMeirWingreen) then
           write(stdOut, '(1x,a,i3,i3,a,ES14.5,a,a)') ' Contact: ',params%ni(ii),params%nf(ii),&
                 & ' current: ', currLead(ii),' ',unitsOfCurrent%name
         end if
@@ -2191,16 +2312,14 @@ contains
       call foldToCSR(this%csrOver, over, kPoints(:,iK), iAtomStart, iPair,&
           & neighbourList%iNeighbour, nNeighbour, img2CentCell, iCellVec, CellVec, orb)
 
-      call negf_density(this%negf, iSCCIter, iS, iK, pCsrHam, pCsrOver, chempot(:,iS),&
-          & DensMat=pCsrDens)
+      call negf_density(this%negf, iS, iK, pCsrHam, pCsrOver, chempot(:,iS), DensMat=pCsrDens)
 
       ! Unless SGFs are not stored, read them from file
       if (this%negf%readOldDM_SGFs.ne.COMP_SGF) then
          call set_readOldDMsgf(this%negf, READ_SGF)
       end if
 
-      call negf_density(this%negf, iSCCIter, iS, iK, pCsrHam, pCsrOver, chempot(:,iS),&
-          & EnMat=pCsrEDens)
+      call negf_density(this%negf, iS, iK, pCsrHam, pCsrOver, chempot(:,iS), EnMat=pCsrEDens)
 
     #:if WITH_MPI
       ! Reduce on node 0 as group lead node

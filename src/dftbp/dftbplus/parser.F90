@@ -81,7 +81,7 @@ module dftbp_dftbplus_parser
 #:endif
 #:if WITH_TRANSPORT
   use dftbp_transport_negfvars, only : TTransPar, TNEGFGreenDensInfo, TNEGFTunDos, TElPh,&
-      & ContactInfo, interaction_models
+      & ContactInfo, interaction_models, integration_type
 #:endif
   implicit none
 
@@ -203,7 +203,7 @@ contains
     call readHamiltonian(hamNode, input%ctrl, input%geom, input%slako, input%transpar,&
         & input%ginfo%greendens, input%poisson)
 
-    ! NOTE: Read Dephasing must be after because of slako%orb 
+    ! NOTE: Read Dephasing must be after because of slako%orb
     call getChild(root, "Dephasing", child, requested=.false.)
     if (associated(child)) then
       !call detailedError(child, "Be patient... Dephasing feature will be available soon!")
@@ -5107,7 +5107,7 @@ contains
           & ctrl%solver%isolver==electronicSolverTypes%OnlyTransport) then
           call detailedError(node, "The TransportOnly solver requires either &
                TunnelingAndDos or LayerCurrent or MeirWingreen to be present.")
-        end if   
+        end if
       end if
     end if
     if (associated(child)) then
@@ -5129,12 +5129,12 @@ contains
           if (any(tundos%elph(:)%wq > 0.0_dp)) then
              call error("TunnelingAndDos not compatible with inelastic scattering. &
                & Use LayerCurrents or MeirWingreen instead.")
-          end if      
-        end if      
+          end if
+        end if
         call readTunAndDos(child, orb, geo, tundos, transpar)
       case ("layercurrents")
         if (all(transpar%contacts(:)%potential.eq.transpar%contacts(1)%potential)) then
-          call detailedError(node,"Layer currents need a finite bias")  
+          call detailedError(node,"Layer currents need a finite bias")
         end if
         call readLayerCurrents(child, orb, geo, tundos, transpar)
       case ("meirwingreen")
@@ -6714,7 +6714,7 @@ contains
       call getChildValue(child2, "Eps0", elph%eps_r, default=1.0_dp)
       call getChildValue(child2, "ScreeningLength", tmp, 10.0_dp, modifier=modifier,&
           & child=field)
-      call convertByMul(char(modifier), lengthUnits, field, tmp)
+      call convertUnitHsd(char(modifier), lengthUnits, field, tmp)
       elph%q0 = 1.0_dp/tmp
     case ("nonpolaroptical")
       elph%model = interaction_models%nonpolaroptical
@@ -6722,7 +6722,7 @@ contains
       call read_common_part(child2)
       call getChildValue(child2, "DeformationPotential", elph%D0, 0.0_dp, modifier=modifier,&
             & child=field)
-      call convertByMul(char(modifier), energyUnits, field, elph%D0)
+      call convertUnitHsd(char(modifier), energyUnits, field, elph%D0)
     case default
       call detailedError(child,"unkown inelastic phonon type: "//char(phonontype))
     end select
@@ -6741,8 +6741,8 @@ contains
            & child=field)
       if (tmp == 0.0_dp) then
          call detailedError(node, "PhononFrequency must be defined > 0.0")
-      end if      
-      call convertByMul(char(modifier), energyUnits, field, tmp)
+      end if
+      call convertUnitHsd(char(modifier), energyUnits, field, tmp)
       elph%wq = tmp
       call getChildValue(node, "Umklapp", elph%tUmklapp, .false.)
       call getChildValue(node, "KSymmetry", elph%tKSymmetry, .true.)
@@ -6916,7 +6916,7 @@ contains
 
     case (textNodeName)
       call getChildValue(node, "Coupling", rTmp, child=field, modifier=modifier)
-      call convertByMul(char(modifier), energyUnits, field, rTmp)
+      call convertUnitHsd(char(modifier), energyUnits, field, rTmp)
       elph%coupling = rTmp
 
     case ("constant")
@@ -6959,12 +6959,10 @@ contains
 
     call getChildValue(root, "Delta", tundos%delta, &
         &1.0e-5_dp, modifier=modifier, child=field)
-    call convertByMul(char(modifier), energyUnits, field, &
-        &tundos%delta)
+    call convertUnitHsd(char(modifier), energyUnits, field, tundos%delta)
     call getChildValue(root, "BroadeningDelta", tundos%broadeningDelta, &
         &0.0_dp, modifier=modifier, child=field)
-    call convertByMul(char(modifier), energyUnits, field, &
-        &tundos%broadeningDelta)
+    call convertUnitHsd(char(modifier), energyUnits, field, tundos%broadeningDelta)
     ! Read Temperature. Can override contact definition
     allocate(tundos%kbT(ncont))
 
@@ -7030,7 +7028,7 @@ contains
     tundos%emax = eRange(2)
 
   end subroutine readCommonBlock
- 
+
   !> Read Tunneling and Dos options from analysis block
   subroutine readTunAndDos(root, orb, geo, tundos, transpar)
     type(fnode), pointer :: root
@@ -7102,14 +7100,14 @@ contains
 
     integer :: ii
     type(string) :: modifier, buffer
-    type(fnode), pointer :: pTmp, field
+    type(fnode), pointer :: child, value1
     type(TWrappedInt1), allocatable :: iAtInRegion(:)
     logical, allocatable :: tShellResInRegion(:)
     character(lc), allocatable :: regionLabelPrefixes(:)
     integer, allocatable :: tmpI1(:), iAt(:)
     character(2) :: lay
     character(lc) :: sAt1, sAt2
-     
+
     allocate(tundos%ni(transpar%nPLs-1))
     allocate(tundos%nf(transpar%nPLs-1))
     do ii = 1, transpar%nPLs-1
@@ -7117,8 +7115,8 @@ contains
       tundos%nf(ii) = ii+1
     end do
     tundos%layerCurrent = .true.
-     
-    ! Create DOS regions == Principal Layers 
+
+    ! Create DOS regions == Principal Layers
     allocate(tShellResInRegion(transpar%nPLs))
     tShellResInRegion = .false.
     allocate(regionLabelPrefixes(transpar%nPLs))
@@ -7136,11 +7134,24 @@ contains
           & geo%species(transpar%idxdevice(1) : transpar%idxdevice(2)), tmpI1,&
           & selectionRange=[transpar%idxdevice(1), transpar%idxdevice(2)], indexRange=[1, geo%nAtom])
       iAtInRegion(ii)%data = tmpI1
-    end do  
+    end do
 
     call transformPdosRegionInfo(iAtInRegion, tShellResInRegion, &
             & regionLabelPrefixes, orb, geo%species, tundos%dosOrbitals, &
             & tundos%dosLabels)
+
+    call getChildValue(root, "Integration", value1, "trapezoidal", child=child)
+    call getNodeName(value1, buffer)
+    select case (char(buffer))
+    case ("trapezoidal")
+      tundos%integration = integration_type%trapezoidal
+    case ("simpson13")
+      tundos%integration = integration_type%simpson13
+    case ("simpson38")
+      tundos%integration = integration_type%simpson38
+    case default
+      call detailedError(child,"Unknown integration :"// char(buffer))
+    end select
 
   end subroutine readLayerCurrents
 
@@ -7156,7 +7167,7 @@ contains
 
     integer :: ii, ncont
     type(string) :: modifier
-    type(fnode), pointer :: pTmp, field
+    type(fnode), pointer :: child, field
 
     ncont = transpar%ncont
     allocate(tundos%ni(ncont))

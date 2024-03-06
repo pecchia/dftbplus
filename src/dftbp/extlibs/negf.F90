@@ -16,13 +16,13 @@ module dftbp_extlibs_negf
       & associate_lead_currents, associate_ldos, associate_transmission, associate_current,&
       & compute_current, compute_density_dft, compute_ldos, create, create_scratch, destroy,&
       & set_readoldDMsgf, destroy_negf, get_params, init_contacts, init_ldos,&
-      & init_negf, init_structure, pass_hs, set_bp_dephasing, set_drop, set_elph_block_dephasing,&
+      & init_negf, init_structure, set_bp_dephasing, set_drop, set_elph_block_dephasing,&
       & set_elph_dephasing, set_elph_s_dephasing, set_ldos_indexes, set_params, set_scratch,&
       & set_tun_indexes, writememinfo, writepeakinfo, dns2csr, csr2dns, nzdrop, printcsr,&
       & compute_phonon_current, thermal_conductance, convertHeatCurrent, convertHeatConductance, &
       & interaction_models, set_elph_polaroptical, set_elph_nonpolaroptical, set_kpoints, &
-      & init_basis, compute_layer_current, compute_meir_wingreen, set_scba_tolerances, create_hs, &
-      & destroy_hs
+      & init_basis, compute_layer_current, compute_meir_wingreen, set_scba_tolerances, create_dm, &
+      & create_hs, destroy_hs, copy_hs, pass_hs, integration_type
 #:if WITH_MPI
   use libnegf, only : negf_mpi_init, negf_cart_init
 #:endif
