@@ -48,6 +48,11 @@ Hamiltonian = DFTB {
     separator  = "-"
     suffix  = ".skf"
   }
+ 
+  Filling = Fermi{
+     Temperature [Kelvin] = 300.0
+  }
+
 
  KPointsAndWeights = SuperCellFolding {
     1 0 0
@@ -64,6 +69,8 @@ Hamiltonian = DFTB {
 
   Eigensolver = GreensFunction{
      LocalCurrents=Yes
+     ContourPoints = 22 23
+     RealAxisPoints = 48
      delta = 5e-4
      verbosity = 100
      #ReadSurfaceGFs = Yes 
