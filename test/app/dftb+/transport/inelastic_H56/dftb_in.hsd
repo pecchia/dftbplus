@@ -1,0 +1,112 @@
+Geometry = GenFormat {
+<<< 'H56.gen'
+}
+
+Transport {
+  Device {
+    AtomRange = 1 36
+    FirstLayerAtoms =  1 7 13 19 25 31
+  }
+  Contact {
+    Id = "source"
+    AtomRange = 37 46
+    Potential [eV] = -0.5
+    FermiLevel =  -0.235474745317908463  
+    Temperature = 0.00001
+  }
+  Contact {
+    Id = "drain"
+    AtomRange = 47 56
+    Potential [eV] = +0.5
+    FermiLevel =  -0.235474745317908463  
+    Temperature = 0.00001
+  }
+  Task = UploadContacts{}
+  readBinaryContact = No
+}
+
+Hamiltonian = DFTB {
+  SCC =Yes
+  MaxSCCIterations = 2
+  ReadInitialCharges = Yes
+  ConvergentSCCOnly = No
+
+  MaxAngularMomentum = {
+    H = "s"
+  }
+  Electrostatics = Poisson {
+    Poissonbox [Angstrom] = 10.0 10.0 100.0
+  }
+  SlaterKosterFiles = Type2FileNames {
+    Prefix = "slakos/origin/mio-1-1/"
+    Separator = "-"    
+    Suffix = ".skf"
+  }
+
+  # This is a trick to enforce a Poisson hence bias potential
+  # but performs a non-scc transport calculation (MaxIterations=1)  
+  Solver = GreensFunction{
+    contourPoints = {22 26}
+    realAxisPoints = 48
+    EnclosedPoles = 0
+  }
+  #Solver = TransportOnly{}
+}
+
+Dephasing {
+ # Elastic = Diagonal{
+ #   Coupling [eV] = Constant { 0.50 }
+ #   MaxSCBAIterations = 10 
+ # }
+
+ Inelastic = PolarOptical{
+   Coupling [eV] = Constant { 1.0 }
+   PhononFrequency [eV] = 0.14
+   EpsInfinity = 1.0
+   Eps0 = 3.0
+   ScreeningLength = 10.0
+   MaxSCBAIterations = 50 
+   SCBATolerance = 1e-5
+   Tridiagonal = Yes
+ }
+
+}  
+
+Analysis = {
+  #Compatible with coherent or elastic scattering
+  #TunnelingAndDos{
+  #  verbosity = 90
+  #  EnergyRange [eV] = -9.00  -1.85
+  #  EnergyStep [eV] = 0.1 
+  #  ComputeLDos = Yes 
+  #  #NOTE: localDOS is computed only without dephasing. 
+  #  #      Possibly this can be adjusted as DOS goes with Gr which is computed 
+  #} 
+  #Compatible with inelastic scattering
+  LayerCurrents {
+    #verbosity = 99 
+    EnergyRange [eV] = -9.00  -5.60
+    EnergyStep [eV] = 0.02
+  }
+  #MeirWingreen{
+  #  verbosity = 70
+  #  EnergyRange [eV] = -9.00  -6.00
+  #  EnergyStep [eV] = 0.05 
+  #}
+}
+
+Options{
+  ReadChargesAsText = Yes 
+  WriteChargesAsText = Yes
+  WriteAutotestTag = Yes
+}
+
+ParserOptions = {
+  ParserVersion = 10 
+}
+
+Parallel = {
+  # Allow OMP threads explicitely to test for hybrid parallelisation with
+  # MPI-binary. (Check the manual before using this in production runs!)
+  UseOmpThreads = Yes
+}
