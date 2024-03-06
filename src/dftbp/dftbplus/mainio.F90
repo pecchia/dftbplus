@@ -1881,7 +1881,7 @@ contains
   subroutine writeAutotestTag(fileName, electronicSolver, tPeriodic, cellVol, tMulliken, qOutput,&
       & derivs, chrgForces, excitedDerivs, tStress, totalStress, pDynMatrix, energy, pressure,&
       & endCoords, tLocalise, localisation, esp, taggedWriter, tunneling, ldos, lCurrArray,&
-      & polarisability, dEidE, dipoleMoment, eFieldScaling)
+      & currents, polarisability, dEidE, dipoleMoment, eFieldScaling)
 
     !> Name of output file
     character(*), intent(in) :: fileName
@@ -1949,6 +1949,9 @@ contains
     !> Array containing bond currents as (Jvalues, atom)
     !> This array is for testing only since it misses info
     real(dp), allocatable, intent(in) :: lCurrArray(:,:)
+
+    !> contact or layer currents
+    real(dp), allocatable, intent(in) :: currents(:)
 
     !> Static electric polarisability
     real(dp), intent(in), allocatable :: polarisability(:,:,:)
@@ -2023,6 +2026,10 @@ contains
       if (size(ldos,1) > 0) then
         call taggedWriter%write(fd, tagLabels%ldos, ldos)
       end if
+    end if
+
+    if (allocated(currents)) then
+      call taggedWriter%write(fd, tagLabels%contactCurrents, currents)
     end if
 
     if (allocated(lCurrArray)) then
@@ -2498,12 +2505,12 @@ contains
 
     integer :: ii, fd
     character(10) :: suffix1, suffix2
-    logical :: tPartialHessian = .false. 
+    logical :: tPartialHessian = .false.
 
     ! Sanity check in case some bug is introduced
     if (size(pDynMatrix, dim=2) /= 3*size(indMovedAtoms)) then
-      call error('Internal error: incorrect number of rows of dynamical Matrix')    
-    end if       
+      call error('Internal error: incorrect number of rows of dynamical Matrix')
+    end if
     ! It is a partial Hessian Calculation if DynMatrix is not squared
     if (size(pDynMatrix, dim=1) > size(pDynMatrix, dim=2)) then
       tPartialHessian = .true.
@@ -2511,10 +2518,10 @@ contains
 
     if (tPartialHessian) then
       write(suffix1,'(I10)') indMovedAtoms(1)
-      write(suffix2,'(I10)') indMovedAtoms(size(indMovedAtoms))     
+      write(suffix2,'(I10)') indMovedAtoms(size(indMovedAtoms))
       open(newunit=fd, file=fileName//"."//trim(adjustl(suffix1))//"-"//trim(adjustl(suffix2)), &
             & action="write", status="replace")
-    else 
+    else
       open(newunit=fd, file=fileName, action="write", status="replace")
     end if
 

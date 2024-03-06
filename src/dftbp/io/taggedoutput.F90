@@ -152,6 +152,12 @@ module dftbp_io_taggedoutput
     !> total projected DOS vector
     character(lenLabel) :: ldos = 'total_localdos'
 
+    !> contact currents
+    character(lenLabel) :: contactCurrents = 'contact_currents'
+
+    !> layer currents
+    character(lenLabel) :: layerCurrents = 'layer_currents'
+
     !> total bond currents
     character(lenLabel) :: localCurrents = 'local_currents'
 

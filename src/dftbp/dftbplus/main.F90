@@ -475,7 +475,8 @@ contains
           & this%tStress, this%totalStress, this%pDynMatrix,&
           & this%dftbEnergy(this%deltaDftb%iFinal), this%extPressure, this%coord0, this%tLocalise,&
           & localisation, this%electrostatPot, this%taggedWriter, this%tunneling, this%ldos,&
-          & this%lCurrArray, this%polarisability, this%dEidE, this%dipoleMoment, this%eFieldScaling)
+          & this%lCurrArray, this%leadCurrents, this%polarisability, this%dEidE, this%dipoleMoment,&
+          & this%eFieldScaling)
     end if
     if (this%tWriteResultsTag) then
       call writeResultsTag(resultsTag, this%dftbEnergy(this%deltaDftb%iFinal), this%derivs,&
