@@ -29,7 +29,7 @@ Transport{
 
 Hamiltonian = DFTB {
   SCC = Yes  
-  MaxSCCIterations = 100
+  MaxSCCIterations = 1
   SCCTolerance = 1e-6
   ReadInitialCharges = Yes 
 
