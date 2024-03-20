@@ -1,0 +1,97 @@
+Geometry = GenFormat {
+<<< 'H5.gen'
+}
+
+Transport {
+  Device {
+    AtomRange = 1 5 
+  }
+  Contact {
+    Id = "source"
+    AtomRange = 6 15
+    Potential [eV] = -0.150
+    FermiLevel [eV] = -6.407593834885180861
+    Temperature = 0.00001
+  }
+  Contact {
+    Id = "drain"
+    AtomRange = 16 25
+    Potential [eV] = +0.150
+    FermiLevel [eV] = -6.407593834885180861
+    Temperature = 0.00001
+  }
+  Task = UploadContacts{}
+  readBinaryContact = No
+}
+
+Hamiltonian = DFTB {
+  SCC =Yes
+  MaxSCCIterations = 15 
+  #ConvergentSCCOnly = No
+
+  MaxAngularMomentum = {
+    H = "s"
+  }
+  Electrostatics = Poisson {
+    Poissonbox [Angstrom] = 10.0 10.0 100.0
+    MinimalGrid [Angstrom] = 0.3 0.3 0.3
+    AtomDensityCutoff [Angstrom] = 2.000
+  }
+  SlaterKosterFiles = Type2FileNames {
+    Prefix = "slakos/origin/mio-1-1/"
+    Separator = "-"    
+    Suffix = ".skf"
+  }
+  Solver = GreensFunction{
+    #verbosity = 100
+    contourPoints = {24 24}
+    realAxisPoints = 16 
+    EnclosedPoles = 0
+  }
+  #Solver = TransportOnly{}
+}
+
+Dephasing {
+ Elastic = Diagonal{
+   Coupling [eV] = Constant { 0.400 }
+   MaxSCBAIterations = 10 
+ }
+}  
+
+Analysis = {
+  #Compatible with coherent or elastic scattering
+  TunnelingAndDos{
+    #verbosity = 90
+    EnergyRange [eV] = -9.00  -1.85
+    EnergyStep [eV] = 0.01 
+    ComputeLDos = Yes 
+    #NOTE: localDOS is computed only without dephasing. 
+    #      Possibly this can be adjusted as DOS goes with Gr which is computed 
+  } 
+  #Compatible with inelastic scattering
+  #LayerCurrents {
+  #  verbosity = 70
+  #  EnergyRange [eV] = -9.00  -1.85
+  #  EnergyStep [eV] = 0.01 
+  #}
+  #MeirWingreen{
+  #  verbosity = 70
+  #  EnergyRange [eV] = -7.00 -5.48
+  #  EnergyStep [eV] = 0.01 
+  #}
+}
+
+Options = {
+  WriteAutotestTag = Yes
+}
+
+ParserOptions = {
+  ParserVersion = 10 
+}
+
+Parallel = {
+  Blacs{BlockSize=2}
+  # Allow OMP threads explicitely to test for hybrid parallelisation with
+  # MPI-binary. (Check the manual before using this in production runs!)
+  UseOmpThreads = Yes
+}

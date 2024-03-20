@@ -11,14 +11,14 @@ Transport {
     Id = "source"
     AtomRange = 37 46
     Potential [eV] = -0.5
-    FermiLevel =  -0.235474745317908463  
+    FermiLevel =  -0.235474745317908463
     Temperature = 0.00001
   }
   Contact {
     Id = "drain"
     AtomRange = 47 56
     Potential [eV] = +0.5
-    FermiLevel =  -0.235474745317908463  
+    FermiLevel =  -0.235474745317908463
     Temperature = 0.00001
   }
   Task = UploadContacts{}
@@ -27,9 +27,10 @@ Transport {
 
 Hamiltonian = DFTB {
   SCC =Yes
-  MaxSCCIterations = 2
+  MaxSCCIterations = 20
   ReadInitialCharges = Yes
   ConvergentSCCOnly = No
+  SCCTolerance = 1e-8
 
   MaxAngularMomentum = {
     H = "s"
@@ -39,13 +40,14 @@ Hamiltonian = DFTB {
   }
   SlaterKosterFiles = Type2FileNames {
     Prefix = "slakos/origin/mio-1-1/"
-    Separator = "-"    
+    Separator = "-"
     Suffix = ".skf"
   }
 
   # This is a trick to enforce a Poisson hence bias potential
-  # but performs a non-scc transport calculation (MaxIterations=1)  
+  # but performs a non-scc transport calculation (MaxIterations=1)
   Solver = GreensFunction{
+    verbosity =31
     contourPoints = {22 26}
     realAxisPoints = 48
     EnclosedPoles = 0
@@ -56,7 +58,7 @@ Hamiltonian = DFTB {
 Dephasing {
  # Elastic = Diagonal{
  #   Coupling [eV] = Constant { 0.50 }
- #   MaxSCBAIterations = 10 
+ #   MaxSCBAIterations = 10
  # }
 
  Inelastic = PolarOptical{
@@ -65,47 +67,47 @@ Dephasing {
    EpsInfinity = 1.0
    Eps0 = 3.0
    ScreeningLength = 10.0
-   MaxSCBAIterations = 50 
-   SCBATolerance = 1e-5
+   MaxSCBAIterations = 50
+   SCBATolerance = 1e-7
    Tridiagonal = Yes
  }
 
-}  
+}
 
 Analysis = {
   #Compatible with coherent or elastic scattering
   #TunnelingAndDos{
   #  verbosity = 90
   #  EnergyRange [eV] = -9.00  -1.85
-  #  EnergyStep [eV] = 0.1 
-  #  ComputeLDos = Yes 
-  #  #NOTE: localDOS is computed only without dephasing. 
-  #  #      Possibly this can be adjusted as DOS goes with Gr which is computed 
-  #} 
+  #  EnergyStep [eV] = 0.1
+  #  ComputeLDos = Yes
+  #  #NOTE: localDOS is computed only without dephasing.
+  #  #      Possibly this can be adjusted as DOS goes with Gr which is computed
+  #}
   #Compatible with inelastic scattering
   LayerCurrents {
-    #verbosity = 99 
+    #verbosity = 99
     EnergyRange [eV] = -9.00  -5.60
     EnergyStep [eV] = 0.02
   }
   #MeirWingreen{
-  #  verbosity = 70
-  #  EnergyRange [eV] = -9.00  -6.00
-  #  EnergyStep [eV] = 0.05 
+  #  EnergyRange [eV] = -9.00  -5.60
+  #  EnergyStep [eV] = 0.02
   #}
 }
 
 Options{
-  ReadChargesAsText = Yes 
+  ReadChargesAsText = Yes
   WriteChargesAsText = Yes
   WriteAutotestTag = Yes
 }
 
 ParserOptions = {
-  ParserVersion = 10 
+  ParserVersion = 10
 }
 
 Parallel = {
+  Blacs{BlockSize=2}
   # Allow OMP threads explicitely to test for hybrid parallelisation with
   # MPI-binary. (Check the manual before using this in production runs!)
   UseOmpThreads = Yes

@@ -250,7 +250,7 @@ contains
           write(stdOut,format2U)'Electro-chemical potentials', params%mu(i), 'H',&
               & Hartree__eV*params%mu(i), 'eV'
         end if
-          
+
         write(stdOut,*)
 
       enddo
@@ -1748,13 +1748,10 @@ contains
 
     subroutine calc_current_ela()
 
-      if (params%verbose.gt.30) then
-        write(stdOut, *)
-        write(stdOut, '(80("="))')
-        write(stdOut, *) '                            COMPUTATION OF CURRENT         '
-        write(stdOut, '(80("="))')
-        write(stdOut, *)
-      end if
+      write(stdOut, *)
+      write(stdOut, '(80("="))')
+      write(stdOut, *) '                     COMPUTING TRANSMISSION AND CURRENT    '
+      write(stdOut, '(80("="))')
 
       call get_params(this%negf, params)
 
@@ -1815,6 +1812,7 @@ contains
 
       ! converts from internal atomic units into amperes
       currLead(:) = currLead * convertCurrent(unitsOfEnergy, unitsOfCurrent)
+      call get_params(this%negf, params)
 
       do ii = 1, size(currLead)
         write(stdOut, *)
@@ -1833,13 +1831,14 @@ contains
         call error('Internal error: no adequate inelastic method for currents.')
       end if
 
-      if (params%verbose.gt.30) then
-        write(stdOut, *)
-        write(stdOut, '(80("="))')
-        write(stdOut, *) '                       COMPUTATION OF INELASTIC CURRENT         '
-        write(stdOut, '(80("="))')
-        write(stdOut, *)
+      write(stdOut, *)
+      write(stdOut, '(80("="))')
+      if (this%tLayerCurrents) then
+        write(stdOut, *) '                        COMPUTING LAYER CURRENTS    '
+      else if (this%tMeirWingreen) then
+        write(stdOut, *) '                 COMPUTING CONTACT CURRENTS (Meir-Wingreen) '
       end if
+      write(stdOut, '(80("="))')
 
       call get_params(this%negf, params)
       params%mu(1:ncont) = mu(1:ncont,1)

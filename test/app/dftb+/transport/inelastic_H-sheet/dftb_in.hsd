@@ -1,0 +1,128 @@
+# In this test there are 4 x 12 H-Atoms. 
+# The 4 H atoms form an equivalent number of subbands at energies, E0_n = -2t, 0 (x2), +2t
+# E_1 = -t - 2t cos(kz * z)
+# E_2 =  0 - 2t cos(kz * z)
+# E_3 =  0 - 2t cos(kz * z)
+# E_4 = +t - 2t cos(kz * z)
+ 
+
+geometry = genformat {
+<<< "h-sheet.gen"
+}
+
+transport {
+    device {
+      atomrange = 1 48 
+    FirstLayerAtoms = 1 9 17 25 33 41
+    }
+    contact {
+      Id = "Source"
+      atomrange = 49  64
+      #FermiLevel [eV] = -4.214698951628502499
+      potential [eV] = 0.05
+    }
+    contact {
+      Id = "Drain"
+      atomrange = 65  80
+      #FermiLevel [eV] = -4.214698951628502499
+      potential [eV] = -0.050
+    }
+
+  
+ #!task = ContactHamiltonian{
+ #  ContactId = "Source"
+ #}
+}
+
+hamiltonian = dftb {
+  scc = yes 
+  scctolerance = 1e-6
+  maxscciterations = 1 
+  ConvergentSCCOnly = No
+  #ReadInitialCharges = Yes
+  maxangularmomentum = {
+    h = s
+  }
+
+  filling = Fermi {
+    Temperature [K] = 0
+  }
+
+  KPointsAndWeights =  SupercellFolding {
+   1   0   0
+   0   16  0 
+   0   0   1 
+   0.0 0.5 0.0
+  }
+
+  Electrostatics = Poisson {
+    MinimalGrid [Angstrom] = 0.3 0.2 0.3
+    AtomDensityCutoff [Angstrom] = 2.000
+     SavePotential = Yes 
+    PoissonAccuracy = 1e-7
+    BuildBulkPotential = No
+    #RecomputeAfterDensity = Yes 
+  }
+
+  #!Electrostatics = gammafunctional{}
+ 
+  slaterkosterfiles = {
+    H-H = "H-H-noS.skf"
+  }
+
+  Solver = GreensFunction{
+     ContourPoints = 0 0 
+     RealAxisPoints = 0
+     EnclosedPoles = 0
+  }
+  #!Solver = DivideAndConquer{} 
+}
+
+Dephasing {
+ Elastic = Diagonal{
+   Coupling [eV] = Constant { 1.0 }
+   MaxSCBAIterations = 10 
+ }
+ Inelastic = PolarOptical{
+   Coupling = Constant { 1.0 }
+   PhononFrequency [eV] = 0.1
+   EpsInfinity = 1.0
+   Eps0 = 3.0
+   ScreeningLength = 10.0
+   MaxSCBAIterations = 50 
+   SCBATolerance = 1e-7
+   Tridiagonal = Yes
+ }
+ #Inelastic = NonPolarOptical{
+ #  Coupling = Constant { 1.0 }
+ #  PhononFrequency [eV] = 0.2
+ #  DeformationPotential [eV] = 0.10
+ #  MaxSCBAIterations = 10 
+ #  SCBATolerance = 1e-8
+ #  Tridiagonal = Yes
+ #}
+}  
+
+Analysis{
+  LayerCurrents{
+    Verbosity = 31
+    EnergyRange [eV] = -5.00 -3.10
+    EnergyStep [eV] = 0.02 
+  }
+}
+
+Parallel = {
+  Blacs{BlockSize=2}
+  # Allow OMP threads explicitely to test for hybrid parallelisation with
+  # MPI-binary. (Check the manual before using this in production runs!)
+  UseOmpThreads = Yes
+  Groups = 2 
+}
+
+options = {
+  writeautotesttag = yes 
+}
+
+parseroptions = {
+  parserversion = 6
+}

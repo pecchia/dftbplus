@@ -480,7 +480,9 @@ transport/SiH-chain_semiInf            #? WITH_TRANSPORT and MPI_PROCS <= 2 and 
 transport/local-curr                   #? WITH_TRANSPORT and MPI_PROCS <= 4 and LONG_TEST
 transport/polyacetylene_semiInf        #? WITH_TRANSPORT and MPI_PROCS <= 4
 transport/H-sheet_end                  #? WITH_TRANSPORT and MPI_PROCS <= 4
+transport/deph_H5                      #? WITH_TRANSPORT and MPI_PROCS <= 4
 transport/inelastic_H56                #? WITH_TRANSPORT and MPI_PROCS <= 4
+transport/inelastic_H-sheet            #? WITH_TRANSPORT and MPI_PROCS <= 4
 
 pp-RPA/ethene                          #? not WITH_MPI
 pp-RPA/benzene_TammDancoff             #? not WITH_MPI
