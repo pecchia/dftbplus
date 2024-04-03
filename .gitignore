@@ -7,8 +7,8 @@ external/gbsa/origin
 external/gbsa/status
 external/slakos/origin
 external/slakos/status
-build
-custom.cmake
+build*
+custom*.cmake
 __pycache__
 .idea
 tools/dptools/build

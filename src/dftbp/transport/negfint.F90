@@ -24,7 +24,8 @@ module dftbp_transport_negfint
       & set_bp_dephasing, set_drop, set_elph_block_dephasing, set_elph_dephasing, destroy_hs,&
       & set_elph_s_dephasing, set_ldos_indexes, set_params, set_scratch, writememinfo, create_dm,&
       & writepeakinfo, printcsr, set_elph_polaroptical, set_elph_nonpolaroptical, set_kpoints, &
-      & init_basis, compute_layer_current, compute_meir_wingreen, set_scba_tolerances
+      & init_basis, compute_layer_current, compute_meir_wingreen, set_scba_tolerances, get_dm,&
+      & copy_dm
   use dftbp_io_formatout, only : writeXYZFormat
   use dftbp_io_message, only : error, warning
   use dftbp_math_eigensolver, only : heev
@@ -1388,18 +1389,20 @@ contains
     subroutine calc_density_inel()
 
       type(z_CSR), target :: csrDens
-      type(z_CSR), pointer :: pCsrDens
-
-      if (nSpin == 2) then
-        call error('Collinear spin not supported with inelastic scattering yet')
-      end if
+      type(z_CSR), pointer :: pcsrDens
 
       call get_params(this%negf, params)
       if (params%Np_real == 0) then
         return
       end if
 
-      pCsrDens => csrDens
+      if (nSpin == 2) then
+        call error('Collinear spin not supported with inelastic scattering yet')
+      end if
+
+      if (nKS > 1) then
+        call error('Inelastic DM currently works with just one k-point')
+      end if
 
       write(stdOut, *)
       write(stdOut, '(80("="))')
@@ -1408,10 +1411,12 @@ contains
 
       params%DorE = 'D'
       params%mu(1:ncont) = mu(1:ncont,1)
+      params%spin = 1
+      params%iKpoint = 1
       call set_params(this%negf, params)
       ! Container for H(k) and S(k)
-      call destroy_HS(this%negf)
       call create_HS(this%negf, nKS)
+      call create_DM(this%negf, nKS)
       ! Pass all local H(k) and S(k) beforehand
       do iKS = 1, nKS
         iK = groupKS(1, iKS)
@@ -1426,14 +1431,22 @@ contains
         call copy_HS(this%negf, this%csrHam, this%csrOver, iKS)
       end do
 
-      call pass_DM(this%negf,rho=pCsrDens)
+      pcsrDens => csrDens
+      call pass_DM(this%negf,rho=pcsrDens)
 
       call compute_density_dft(this%negf)
 
-      call unfoldFromCSR(rho(:,1), csrDens, kPoints(:,iK), kWeights(iK), iAtomStart, &
-            & iPair, iNeighbor, nNeighbor, img2CentCell, iCellVec, cellVec, orb)
+      do iKS = 1, nKS
+        iK = groupKS(1, iKS)
+        iS = groupKS(2, iKS)
 
-      call destroy(csrDens)
+        !call get_DM(this%negf, csrDens)
+
+        call unfoldFromCSR(rho(:,1), csrDens, kPoints(:,iK), kWeights(iK), iAtomStart, &
+                     & iPair, iNeighbor, nNeighbor, img2CentCell, iCellVec, cellVec, orb)
+      end do
+
+      call destruct(csrDens)
 
       write(stdOut,'(80("="))')
       write(stdOut,*)

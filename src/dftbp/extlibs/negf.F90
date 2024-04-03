@@ -22,7 +22,7 @@ module dftbp_extlibs_negf
       & compute_phonon_current, thermal_conductance, convertHeatCurrent, convertHeatConductance, &
       & interaction_models, set_elph_polaroptical, set_elph_nonpolaroptical, set_kpoints, &
       & init_basis, compute_layer_current, compute_meir_wingreen, set_scba_tolerances, create_dm, &
-      & create_hs, destroy_hs, copy_hs, pass_hs, integration_type
+      & create_hs, destroy_hs, copy_hs, pass_hs, copy_dm, get_dm, integration_type
 #:if WITH_MPI
   use libnegf, only : negf_mpi_init, negf_cart_init
 #:endif
