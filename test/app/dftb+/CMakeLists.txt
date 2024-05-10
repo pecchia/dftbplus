@@ -39,4 +39,5 @@ foreach(test IN LISTS tests)
     dftb+_${test}
     PROPERTIES
     ENVIRONMENT "DFTBPLUS_PARAM_DIR=${PROJECT_SOURCE_DIR}/external")
+  set_tests_properties(dftb+_${test} PROPERTIES LABELS "dftb+/${test}") 
 endforeach()

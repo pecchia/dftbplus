@@ -931,7 +931,7 @@ contains
     if(present(EnMat)) then
        params%DorE = 'E'
        call set_params(negf,params)
-       call pass_DM(negf,rhoE=EnMat)
+       call pass_DM(negf,rho=EnMat)
     endif
     if (present(DensMat).and.present(EnMat)) then
        params%DorE  = 'B'
@@ -976,7 +976,7 @@ contains
     if(present(EnMat)) then
        params%DorE = 'E'
        call set_params(negf,params)
-       call pass_DM(negf,rhoE=EnMat)
+       call pass_DM(negf,rho=EnMat)
     endif
 
     call compute_density_dft(negf)
@@ -1374,8 +1374,9 @@ contains
       end do
 
      #:if WITH_MPI
+      ! In place reduce of the density matrix along energy (groupComm)
+      ! and k-points (interGroupComm)
       do iS = 1, nSpin
-        ! In place all-reduce of the density matrix
         call mpifx_allreduceip(env%mpi%groupComm, rho(:,iS), MPI_SUM)
       end do
       call mpifx_allreduceip(env%mpi%interGroupComm, rho, MPI_SUM)
@@ -1388,8 +1389,9 @@ contains
     ! ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     subroutine calc_density_inel()
 
-      type(z_CSR), target :: csrDens
-      type(z_CSR), pointer :: pcsrDens
+      !type(z_CSR), target :: csrDens
+      !type(z_CSR), pointer :: pcsrDens
+      type(TMatrixArray) :: csrDens(nKS)
 
       call get_params(this%negf, params)
       if (params%Np_real == 0) then
@@ -1400,9 +1402,9 @@ contains
         call error('Collinear spin not supported with inelastic scattering yet')
       end if
 
-      if (nKS > 1) then
-        call error('Inelastic DM currently works with just one k-point')
-      end if
+      !if (nKS > 1) then
+      !  call error('Inelastic DM currently works with just one k-point')
+      !end if
 
       write(stdOut, *)
       write(stdOut, '(80("="))')
@@ -1429,10 +1431,13 @@ contains
               & img2CentCell, iCellVec, cellVec, orb)
 
         call copy_HS(this%negf, this%csrHam, this%csrOver, iKS)
+        
+        allocate(csrDens(iKS)%Mat)
+        call pass_DM(this%negf, rho=csrDens(iKS)%Mat, iKS=iKS)
       end do
 
-      pcsrDens => csrDens
-      call pass_DM(this%negf,rho=pcsrDens)
+      !pcsrDens => csrDens
+      !call pass_DM(this%negf,rho=pcsrDens)
 
       call compute_density_dft(this%negf)
 
@@ -1440,13 +1445,20 @@ contains
         iK = groupKS(1, iKS)
         iS = groupKS(2, iKS)
 
-        !call get_DM(this%negf, csrDens)
-
-        call unfoldFromCSR(rho(:,1), csrDens, kPoints(:,iK), kWeights(iK), iAtomStart, &
+        call unfoldFromCSR(rho(:,1), csrDens(iKS)%Mat, kPoints(:,iK), kWeights(iK), iAtomStart, &
                      & iPair, iNeighbor, nNeighbor, img2CentCell, iCellVec, cellVec, orb)
+     
+        call destruct(csrDens(iKS)%Mat)
       end do
-
-      call destruct(csrDens)
+     
+     #:if WITH_MPI
+      ! In place reduce of the density matrix along energy (groupComm)
+      ! and k-points (interGroupComm)
+      do iS = 1, nSpin
+        call mpifx_allreduceip(env%mpi%groupComm, rho(:,iS), MPI_SUM)
+      end do
+      call mpifx_allreduceip(env%mpi%interGroupComm, rho, MPI_SUM)
+     #:endif
 
       write(stdOut,'(80("="))')
       write(stdOut,*)
