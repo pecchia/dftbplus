@@ -181,7 +181,7 @@ string(REGEX MATCH "(^|;)[Ss]ubmodule(^|;)" INCLUDE_INDIRECT_DEPS "${HYBRID_CONF
 
 if(WITH_MPI)
   set(MPIFX_GIT_REPOSITORY "https://github.com/dftbplus/mpifx.git")
-  set(MPIFX_GIT_TAG "da51073aa87831a91ae756a9773e39ea000d1c3a")  # do not change manually!
+  set(MPIFX_GIT_TAG "78dd4ee98fe0d47423682f5ddb8a75e7461039fa")  # do not change manually!
   dftbp_config_hybrid_dependency(MpiFx MpiFx::MpiFx "${HYBRID_CONFIG_METHODS}" "QUIET"
     external/mpifx "${exclude}" "${MPIFX_GIT_REPOSITORY}" "${MPIFX_GIT_TAG}")
 
@@ -206,8 +206,8 @@ if(WITH_MBD)
 endif()
 
 if(WITH_TRANSPORT)
-  set(LIBNEGF_GIT_REPOSITORY "https://github.com/libnegf/libnegf.git")
-  set(LIBNEGF_GIT_TAG "5b769f76406b12ec2faad30593cb061c5bec7d47")  # do not change manually!
+  set(LIBNEGF_GIT_REPOSITORY "https://github.com/pecchia/libnegf.git")
+  set(LIBNEGF_GIT_TAG "45867e119165df071c20bbeac2f89f1dc6101780")  # do not change manually!
   dftbp_config_hybrid_dependency(Negf Negf::Negf "${HYBRID_CONFIG_METHODS}" "QUIET"
     external/libnegf "${exclude}" "${LIBNEGF_GIT_REPOSITORY}" "${LIBNEGF_GIT_TAG}")
   #list(APPEND PKG_CONFIG_REQUIRES negf)
