@@ -1605,7 +1605,7 @@ contains
             & this%boundaryCond%iBoundaryCondition, this%nAtom, coulombInput)
       end if
       call initSccCalculator_(env, this%orb, input%ctrl, this%boundaryCond%iBoundaryCondition,&
-          & coulombInput, shortGammaInput, poissonInput, this%scc)
+          & coulombInput, shortGammaInput, poissonInput, this%shiftPerLUp, this%scc)
 
       ! Stress calculation does not work if external charges are involved
       this%nExtChrg = input%ctrl%nExtChrg
@@ -2753,7 +2753,7 @@ contains
           ii = size(input%ctrl%atomicExtPotential%iAtOnSite)
           if (ii > 1) then
             if (any(input%ctrl%atomicExtPotential%iAtOnSite < 1) .or.&
-                & any(input%ctrl%atomicExtPotential%iAtOnSite > size(this%iAtInCentralRegion))) then
+                & any(input%ctrl%atomicExtPotential%iAtOnSite > this%nAtom)) then
               call error("Net potential atom(s) outside of range of real atoms")
             end if
             if (isRepeated(input%ctrl%atomicExtPotential%iAtOnSite)) then
@@ -2765,7 +2765,7 @@ contains
           jj = size(input%ctrl%atomicExtPotential%iAt)
           if (jj > 1) then
             if (any(input%ctrl%atomicExtPotential%iAt < 1) .or.&
-                & any(input%ctrl%atomicExtPotential%iAt > size(this%iAtInCentralRegion))) then
+                & any(input%ctrl%atomicExtPotential%iAt > this%nAtom)) then
               call error("Gross potential atom(s) outside of range of real atoms")
             end if
             if (isRepeated(input%ctrl%atomicExtPotential%iAt)) then
@@ -6033,7 +6033,7 @@ contains
 
   ! Initializes the scc calculator
   subroutine initSccCalculator_(env, orb, ctrl, boundaryCond, coulombInput, shortGammaInput,&
-      & poissonInput, sccCalc)
+      & poissonInput, shiftPerLUp, sccCalc)
     type(TEnvironment), intent(inout) :: env
     type(TOrbitals), intent(in) :: orb
     type(TControl), intent(in) :: ctrl
@@ -6041,6 +6041,7 @@ contains
     type(TCoulombInput), allocatable, intent(inout) :: coulombInput
     type(TShortGammaInput), allocatable, intent(inout) :: shortGammaInput
     type(TPoissonInput), allocatable, intent(inout) :: poissonInput
+    real(dp), allocatable, intent(inout) :: shiftPerLUp(:,:)
     type(TScc), allocatable, intent(out) :: sccCalc
 
     type(TSccInput) :: sccInput
@@ -6048,6 +6049,9 @@ contains
     call move_alloc(coulombInput, sccInput%coulombInput)
     call move_alloc(shortGammaInput, sccInput%shortGammaInput)
     call move_alloc(poissonInput, sccInput%poissonInput)
+    if (allocated(shiftPerLUp)) then
+      call move_alloc(shiftPerLUp, sccInput%shiftPerLUp)
+    end if
 
     sccInput%boundaryCond = boundaryCond
     if (boundaryCond == boundaryConditions%helical) then

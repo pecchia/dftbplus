@@ -43,6 +43,9 @@ module dftbp_dftb_scc
     !> third order energy contributions
     real(dp), allocatable :: thirdOrderOn(:,:)
 
+    !> Shift vector per l-shell Contact Upload
+    real(dp), allocatable :: shiftPerLUp(:,:)
+
     !> Calculator for short gamma
     type(TShortGammaInput), allocatable :: shortGammaInput
 
@@ -82,6 +85,9 @@ module dftbp_dftb_scc
 
     !> Shift vector per l-shell
     real(dp), allocatable :: shiftPerL(:,:)
+
+    !> Shift vector per l-shell Contact Upload
+    real(dp), allocatable :: shiftPerLUpload(:,:)
 
     !> Atomic coordinates
     real(dp), allocatable :: coord(:,:)
@@ -173,6 +179,9 @@ module dftbp_dftb_scc
     !> Returns the shift per L contribution of the SCC.
     procedure :: getShiftPerL
 
+    !> Get Uploaded Shifts
+    procedure :: getShiftPerLUpload
+
     !> Calculate the "double counting" force term using linearized XLBOMD form
     procedure :: addForceDcXlbomd
 
@@ -190,6 +199,9 @@ module dftbp_dftb_scc
 
     !> Triggers all instructions which must be done once the SCC-loop had been finished
     procedure :: finishSccLoop
+
+    !> Overrides the Uploaded shifts (only for gamma-functional)
+    procedure :: overrideShiftUpload
 
   end type TScc
 
@@ -230,6 +242,7 @@ contains
 
     allocate(this%shiftPerAtom(this%nAtom))
     allocate(this%shiftPerL(this%mShell, this%nAtom))
+    call move_alloc(input%shiftPerLUp, this%shiftPerLUpload)
 
     if (allocated(input%shortGammaInput)) then
       this%elstatType = elstatTypes%gammaFunc
@@ -825,6 +838,23 @@ contains
 
   end subroutine getShiftPerL
 
+  !> Returns the shift per L Uploaded.
+  subroutine getShiftPerLUpload(this, shift)
+
+    !> Instance
+    class(TScc), intent(in) :: this
+
+    !> Contains the shift on exit.
+    real(dp), intent(out), allocatable :: shift(:,:)
+
+    @:ASSERT(this%tInitialised)
+
+    if (allocated(this%shiftPerLUpload)) then
+      allocate(shift, source=this%shiftPerLUpload)
+    end if
+
+  end subroutine getShiftPerLUpload
+
 
   !> Calculate the "double counting" force term using linearized XLBOMD form.
   !> Note: When SCC is driven in XLBOMD mode, the charges should NOT be updated after diagonalizing
@@ -1018,6 +1048,32 @@ contains
 
   end subroutine finishSccLoop
 
+  !> Overrides uploaded shifts in the contacts (only for gamma funct)
+  subroutine overrideShiftUpload(this, intShell, iAtInCentralRegion)
+
+    !> Instance
+    class(TScc), intent(in) :: this
+
+    !> Internal shell-resolved shifts
+    real(dp), intent(inout) :: intShell(:,:,:)
+
+    !> Atom indices in the central region (not to be overridden)
+    integer, intent(in), optional :: iAtInCentralRegion(:)
+
+    integer :: iAtStart, nAtom
+
+    if (this%elstatType == elstatTypes%poisson) return
+
+    nAtom = size(intShell, 2)
+
+    if (present(iAtInCentralRegion)) then
+      if (allocated(this%shiftPerLUpload)) then
+        iAtStart = maxval(iAtInCentralRegion)+1
+        intShell(:,iAtStart:nAtom,1) = this%shiftPerLUpload(:,iAtStart:nAtom)
+      end if
+    end if
+
+  end subroutine overrideShiftUpload
 
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 !!!  Private routines

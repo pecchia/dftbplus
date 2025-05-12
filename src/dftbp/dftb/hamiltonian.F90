@@ -145,7 +145,7 @@ contains
   !> spin, and where relevant dispersion
   subroutine addChargePotentials(env, sccCalc, tblite, updateScc, qInput, q0, chargePerShell,&
       & orb, multipole, species, neighbourList, img2CentCell, spinW, solvation, thirdOrd,&
-      & dispersion, potential)
+      & dispersion, potential, iAtInCentralRegion)
 
     !> Environment settings
     type(TEnvironment), intent(inout) :: env
@@ -198,12 +198,16 @@ contains
     !> Dispersion interactions object
     class(TDispersionIface), allocatable, intent(inout) :: dispersion
 
+    !> List of atoms in central region
+    integer, intent(in), optional :: iAtInCentralRegion(:)
+
     ! local variables
     real(dp), allocatable :: atomPot(:,:)
     real(dp), allocatable :: shellPot(:,:,:)
+    real(dp), allocatable :: shellPotUpload(:,:)
     real(dp), allocatable :: dipPot(:,:), quadPot(:,:)
     integer, pointer :: pSpecies0(:)
-    integer :: nAtom, nSpin
+    integer :: nAtom, nSpin, iAtStart
 
     nAtom = size(qInput, dim=2)
     nSpin = size(qInput, dim=3)
@@ -279,6 +283,8 @@ contains
     end if
 
     call totalShift(potential%intShell, potential%intAtom, orb, species)
+    ! Only at the end we override the shell potential with uploaded contact shifts
+    call sccCalc%overrideShiftUpload(potential%intShell, iAtInCentralRegion)
     call totalShift(potential%intBlock, potential%intShell, orb, species)
 
   end subroutine addChargePotentials

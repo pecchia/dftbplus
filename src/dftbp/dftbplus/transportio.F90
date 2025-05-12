@@ -41,7 +41,7 @@ contains
     !> shifts organized per (shell , atom,  spin)
     real(dp), intent(in) :: shiftPerL(:,:,:)
 
-    integer :: fdHS, nSpin, nAtom, ii, jj
+    integer :: fdHS, nSpin, nAtom, ii, jj, kk
 
     nSpin = size(shiftPerL, dim=3)
     nAtom = size(shiftPerL, dim=2)
@@ -55,9 +55,17 @@ contains
     endif
 
     open(newunit=fdHS, file=fShifts, form="formatted")
+
     write(fdHS, *) nAtom, orb%mShell, orb%mOrb, nSpin
-    do ii = 1, nAtom
-      write(fdHS, *) orb%nOrbAtom(ii), (shiftPerL(:,ii,jj), jj = 1, nSpin)
+
+    do jj = 1, nAtom
+      write(fdHS, '(I3)',advance='no') orb%nOrbAtom(jj)
+      do kk = 1, nSpin
+        do ii = 1, size(shiftPerL,1)
+          write(fdHS, '(ES27.15)',advance='no') shiftPerL(ii,jj,kk)
+        end do
+      end do
+      write(fdHS,*)
     end do
 
     close(fdHS)

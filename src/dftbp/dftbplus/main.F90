@@ -782,6 +782,8 @@ contains
       if (this%tWriteDetailedOut) then
         call openOutputFile(userOut, tAppendDetailedOut, this%fdDetailedOut)
       end if
+      ! All potentials are added up into intBlock
+      this%potential%intBlock = this%potential%intBlock + this%potential%extBlock
       ! We need to define hamiltonian by adding the potential
       call getSccHamiltonian(this%H0, this%ints, this%nNeighbourSK, this%neighbourList,&
           & this%species, this%orb, this%iSparseStart, this%img2CentCell, this%potential,&
@@ -931,7 +933,7 @@ contains
           call addChargePotentials(env, this%scc, this%tblite, .true., this%qInput, this%q0,&
               & this%chargePerShell, this%orb, this%multipoleInp, this%species, this%neighbourList,&
               & this%img2CentCell, this%spinW, this%solvation, this%thirdOrd, this%dispersion,&
-              & this%potential)
+              & this%potential, this%iAtInCentralRegion)
 
           call addBlockChargePotentials(this%qBlockIn, this%qiBlockIn, this%dftbU, this%tImHam,&
               & this%species, this%orb, this%potential)
@@ -1048,7 +1050,7 @@ contains
             call addChargePotentials(env, this%scc, this%tblite, this%updateSccAfterDiag,&
                 & this%qOutput, this%q0, this%chargePerShell, this%orb, this%multipoleOut,&
                 & this%species, this%neighbourList, this%img2CentCell, this%spinW, this%solvation,&
-                & this%thirdOrd, this%dispersion, this%potential)
+                & this%thirdOrd, this%dispersion, this%potential, this%iAtInCentralRegion)
 
             call addBlockChargePotentials(this%qBlockOut, this%qiBlockOut, this%dftbU, this%tImHam,&
                 & this%species, this%orb, this%potential)

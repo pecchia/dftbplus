@@ -1526,13 +1526,11 @@ contains
     #:endif
     end if
 
-    ! temporararily removed until debugged
-    !if (.not. ctrl%tscc) then
-    !  !! In a non-SCC calculation it is possible to upload charge shifts
-    !  !! This is useful if the calculation can jump directly to the Analysis block
-    !  call getChildValue(node, "ReadShifts", ctrl%tReadShifts, .false.)
-    !end if
-    ctrl%tReadShifts = .false.
+    if (.not. ctrl%tscc) then
+      !! In a non-SCC calculation it is possible to upload charge shifts
+      !! This is useful if the calculation can jump directly to the Analysis block
+      call getChildValue(node, "ReadShifts", ctrl%tReadShifts, .false.)
+    end if
 
     ! External fields and potentials
     call readExternal(node, ctrl, geo)
@@ -2169,12 +2167,12 @@ contains
     select case (char(buffer))
 
     case ("gammafunctional")
-    #:if WITH_TRANSPORT
-      if (tp%taskUpload .and. ctrl%tSCC) then
-        call detailedError(value1, "GammaFunctional not available, if you upload contacts in an SCC&
-            & calculation.")
-      end if
-    #:endif
+    !#:if WITH_TRANSPORT
+    !  if (tp%taskUpload .and. ctrl%tSCC) then
+    !    call detailedError(value1, "GammaFunctional not available, if you upload contacts in an SCC&
+    !        & calculation.")
+    !  end if
+    !#:endif
 
     case ("poisson")
       if (.not. withPoisson) then
@@ -3061,9 +3059,7 @@ contains
 
     call getChildValue(node, "SCCTolerance", ctrl%sccTol, 1.0e-5_dp)
 
-    ! temporararily removed until debugged
-    !call getChildValue(node, "WriteShifts", ctrl%tWriteShifts, .false.)
-    ctrl%tWriteShifts = .false.
+    call getChildValue(node, "WriteShifts", ctrl%tWriteShifts, .false.)
 
     if (geo%tPeriodic) then
       call getChildValue(node, "EwaldParameter", ctrl%ewaldAlpha, 0.0_dp)
@@ -6288,9 +6284,9 @@ contains
       call getPoissonBoundaryConditionOverrides(pTmp, [ 1, 2 ], poisson%overrideBC)
     end if
 
-    call getChildValue(pNode, "OverrideBulkBC", pTmp, "none")
+    call getChild(pNode, "OverrideBulkBC", pTmp, requested=.false.)
     poisson%overrBulkBC(:) = -1
-    if (associated(pNode)) then
+    if (associated(pTmp)) then
       call getPoissonBoundaryConditionOverrides(pTmp, [ 0, 1, 2 ], poisson%overrBulkBC)
     end if
 
